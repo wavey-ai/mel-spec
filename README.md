@@ -1,3 +1,11 @@
+### using with whisper.cpp
+
+Please refer to these PRs, both whisper.cpp and whisper-rs require small
+changes:
+
+https://github.com/tazz4843/whisper-rs/pull/75
+https://github.com/ggerganov/whisper.cpp/pull/1130
+
 ### Mel Spec
 
 A Rust implementation of mel spectrograms aligned to the results from the
