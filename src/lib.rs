@@ -14,12 +14,12 @@ pub struct AudioProcessor {
     fft_size: usize,
 }
 
-// stream-based stft processor.
-// Nearly identical to whisper.cpp, pytorch, etc, but the caller might be mindful of the
-// first and final frames:
-//   a) pass in exact FTT-size sample for initial window to avoid automatic zero-padding
-//   b) be aware the final frame will be zero-padded if it is < hop size.
-//     - neither is necessary unless you are running additional analysis.
+/// stream-based stft processor.
+/// Nearly identical to whisper.cpp, pytorch, etc, but the caller might be mindful of the
+/// first and final frames:
+///   a) pass in exact FTT-size sample for initial window to avoid automatic zero-padding
+///   b) be aware the final frame will be zero-padded if it is < hop size.
+///     - neither is necessary unless you are running additional analysis.
 impl AudioProcessor {
     pub fn new(fft_size: usize, hop_size: usize) -> Self {
         let mut planner = FftPlanner::new();
@@ -39,8 +39,8 @@ impl AudioProcessor {
         }
     }
 
-    // add new samples, get an FFT out.
-    // ~580 microseconds (ftt_size=400) on M2 Air.
+    /// add new samples, get an FFT out.
+    /// ~580 microseconds (ftt_size=400) on M2 Air.
     pub fn add(&mut self, data: &Vec<f32>) -> Array1<Complex<f64>> {
         let fft_size = self.fft_size;
         let hop_size = self.hop_size;
@@ -77,10 +77,10 @@ impl AudioProcessor {
     }
 }
 
-// Rust port of whisper.cpp and whisper.py log_mel_spectrogram
-// NB: a) normalisation is a separate step, refer to norm_mel.
-//     b) the Array2 output must be correctly interleaved before processing with
-//      whisper.cpp - refer to interleave_frame.
+/// Rust port of whisper.cpp and whisper.py log_mel_spectrogram
+/// NB: a) normalisation is a separate step, refer to norm_mel.
+///     b) the Array2 output must be correctly interleaved before processing with
+///      whisper.cpp - refer to interleave_frame.
 pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
     let mut magnitudes_padded = stft
         .iter()
@@ -101,18 +101,18 @@ pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64
     mel_spec
 }
 
-// Normalisation based on max value in the sample window.
-//
-// Two variants of this function are provided, only one should be used in a pipeline:
-//   norm_mel: to be called on individual Array2 results from log_mel_spectrogram
-//   norm_mel_vec: to be called on the product of interleave_frames
-//
-// One of these must be applied to the individual or combined output of log_mel_spectrogram
-// before processing with whisper (note that it also converts from f64 precision to f32).
-//
-// It's adequate to normalise ftt window-size sample lengths individually but larger sample
-// sizes may sometimes give better results and these functions allow flexibility in the
-// sample size that's normalised over.
+/// Normalisation based on max value in the sample window.
+///
+/// Two variants of this function are provided, only one should be used in a pipeline:
+///   norm_mel: to be called on individual Array2 results from log_mel_spectrogram
+///   norm_mel_vec: to be called on the product of interleave_frames
+///
+/// One of these must be applied to the individual or combined output of log_mel_spectrogram
+/// before processing with whisper (note that it also converts from f64 precision to f32).
+///
+/// It's adequate to normalise ftt window-size sample lengths individually but larger sample
+/// sizes may sometimes give better results and these functions allow flexibility in the
+/// sample size that's normalised over.
 pub fn norm_mel(mel_spec: &Array2<f64>) -> Array2<f64> {
     let mmax = mel_spec.fold(f64::NEG_INFINITY, |acc, x| acc.max(*x));
     let mmax = mmax - 8.0;
@@ -121,7 +121,7 @@ pub fn norm_mel(mel_spec: &Array2<f64>) -> Array2<f64> {
     clamped
 }
 
-// vector-variant of norm_mel.
+/// vector-variant of norm_mel.
 pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
     let mmax = mel_spec
         .iter()
@@ -135,12 +135,15 @@ pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
     clamped
 }
 
-// Interleave in major row order: ideal of waterfall - each row is a scanline.
-// Interleave in major column order: Data will be interleaved such that each row
-//   represents a different frequency band, and each column represents a time step,
-//   matching the format of the whisper.cpp C mel.data array.
+/// Interleave in major row order: ideal of waterfall representations where each row is
+///  a scanline.
+/// Interleave in major column order: Data will be interleaved such that each row
+///  represents a different frequency band, and each column represents a time step,
+///  matching the format of the whisper.cpp C mel.data array.
 pub fn interleave_frames(frames: &Vec<Array2<f64>>, major_row_order: bool) -> Vec<f32> {
     let num_frames = frames.len();
+    assert!(num_frames > 0, "interleave_frames called with empty frames");
+
     let num_filters = frames[0].shape()[0];
 
     let mut interleaved_data = Vec::with_capacity(num_frames * num_filters);
@@ -166,7 +169,7 @@ pub fn interleave_frames(frames: &Vec<Array2<f64>>, major_row_order: bool) -> Ve
     interleaved_data
 }
 
-// mel filterbanks, within 1.0e-7 of librosa and identical to whisper GGML model-embedded filters.
+/// mel filterbanks, within 1.0e-7 of librosa and identical to whisper GGML model-embedded filters.
 pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array2<f64> {
     let fftfreqs = fft_frequencies(sr, n_fft);
     let f_min: f64 = 0.0; // Minimum frequency
@@ -203,7 +206,7 @@ pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array
     weights
 }
 
-// it's unclear if this is required - whisper.cpp works fine without padding.
+/// it's unclear if this is required - whisper.cpp works fine without padding.
 pub fn pad_or_trim(array: &Array2<f32>, length: usize) -> Array2<f32> {
     let array_shape = array.shape();
     let original_length = array_shape[1];
@@ -468,12 +471,11 @@ mod tests {
             // its sufficent to normalise this example in very small chunks of hop size but this
             // might not always be the most appropriate sample size.
             let norm = norm_mel(&mel);
-            mels.push(norm);
+            mels.push(mel);
         }
 
         // alternatively, you could normalise the interleaved frames here.
-        // let mel_spectrogram = interleave_frames(&mels);
-
+        let mel_spectrogram = interleave_frames(&mels, true);
         // add whisper-rs to continue this example
 
         /*
