@@ -24,7 +24,7 @@ impl AudioProcessor {
     pub fn new(fft_size: usize, hop_size: usize) -> Self {
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(fft_size);
-        let mut window: Vec<f64> = (0..fft_size)
+        let window: Vec<f64> = (0..fft_size)
             .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
             .collect();
 
@@ -432,6 +432,9 @@ mod tests {
         let file = File::open(&file_path).unwrap();
         let data = parse_wav(file).unwrap();
         assert_eq!(data.sampling_rate, 16000);
+        assert_eq!(data.channel_count, 1);
+        assert_eq!(data.bits_per_sample, 32);
+
         let samples = deinterleave_vecs_f32(&data.data, 1);
 
         // setup stft
@@ -444,7 +447,6 @@ mod tests {
         // setup mel filterbank
         let filters = mel(sampling_rate, fft_size, n_mels, false, true);
         let mut mels: Vec<Array2<f64>> = Vec::new();
-        let initial_window = &samples[0][..fft_size];
 
         // process samples - note the caller is responsioble for sending samples in chunks of
         // whisper's fft hop size (160 samples).
@@ -458,7 +460,7 @@ mod tests {
         }
 
         // alternatively, you could normalise the interleaved frames here.
-        let mel_spectrogram = interleave_frames(&mels);
+        // let mel_spectrogram = interleave_frames(&mels);
 
         // add whisper-rs to continue this example
 
