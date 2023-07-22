@@ -2,14 +2,13 @@
 name = "mel_spec"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT"
+description = "Mel spectrograms aligned to the results from the whisper.cpp, pytorch and librosa reference implementations and suited to streaming audio."
+repository = "https://github.com/wavey-ai/mel_spec"
+readme = "README.md"
 
 [dependencies]
 ndarray = "0.15.6"
 ndarray-npy = "0.8.1"
 num = "0.4.1"
 rustfft = "6.1.0"
-
-[dev-dependencies]
-whisper-rs = { path = "../whisper-rs" }

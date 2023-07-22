@@ -267,7 +267,7 @@ mod tests {
     use ndarray_npy::NpzReader;
     use std::fs::File;
     use std::io::Read;
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
+    //    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
     struct AudioFileData {
         bits_per_sample: u8,
