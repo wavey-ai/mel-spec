@@ -1,10 +1,10 @@
 [package]
 name = "mel_spec"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Mel spectrograms aligned to the results from the whisper.cpp, pytorch and librosa reference implementations and suited to streaming audio."
-repository = "https://github.com/wavey-ai/mel_spec"
+repository = "https://github.com/wavey-ai/mel-spec"
 readme = "README.md"
 
 [dependencies]
