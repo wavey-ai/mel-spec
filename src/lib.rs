@@ -122,7 +122,7 @@ pub fn norm_mel(mel_spec: &Array2<f64>) -> Array2<f64> {
 }
 
 // vector-variant of norm_mel.
-pub fn norm_mel_vecs(mel_spec: &[f32]) -> Vec<f32> {
+pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
     let mmax = mel_spec
         .iter()
         .fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
@@ -135,19 +135,31 @@ pub fn norm_mel_vecs(mel_spec: &[f32]) -> Vec<f32> {
     clamped
 }
 
-// This should be performed on an array of combined spectrograms processed by norm_mel.
-// Data will be interleaved such that each row represents a different frequency band, and each
-// column represents a time step, matching the format of the whisper.cpp C mel.data array.
-pub fn interleave_frames(frames: &Vec<Array2<f64>>) -> Vec<f32> {
+// Interleave in major row order: ideal of waterfall - each row is a scanline.
+// Interleave in major column order: Data will be interleaved such that each row
+//   represents a different frequency band, and each column represents a time step,
+//   matching the format of the whisper.cpp C mel.data array.
+pub fn interleave_frames(frames: &Vec<Array2<f64>>, major_row_order: bool) -> Vec<f32> {
     let num_frames = frames.len();
     let num_filters = frames[0].shape()[0];
 
     let mut interleaved_data = Vec::with_capacity(num_frames * num_filters);
 
-    for filter_idx in 0..num_filters {
+    if major_row_order {
+        // Interleave in major row order
         for frame_idx in 0..num_frames {
-            let frame_view = ArrayView2::from(&frames[frame_idx]);
-            interleaved_data.push(*frame_view.get((filter_idx, 0)).unwrap() as f32);
+            for filter_idx in 0..num_filters {
+                let frame_view = ArrayView2::from(&frames[frame_idx]);
+                interleaved_data.push(*frame_view.get((filter_idx, 0)).unwrap() as f32);
+            }
+        }
+    } else {
+        // Interleave in major column order - whisper.cpp
+        for filter_idx in 0..num_filters {
+            for frame_idx in 0..num_frames {
+                let frame_view = ArrayView2::from(&frames[frame_idx]);
+                interleaved_data.push(*frame_view.get((filter_idx, 0)).unwrap() as f32);
+            }
         }
     }
 
