@@ -1,13 +1,21 @@
 ### Mel Spec
 
-Mel filterbank in Rust using `ndarray::Array2` that is within 1.0e-7 of the values produced by
-`librosa.filters.mel`.
+A Rust implementation of mel spectrograms aligned to the results from the
+whisper.cpp, pytorch and librosa reference implementations and suited to
+streaming audio.
 
-#### usage
+The main objective is to allow inference from spectrograms alone, so that
+audio samples don't need to be kept in context for follow-up processing.
 
-`let filterbank = mel(16000.0, 400, 80)`
+#### filter banks
 
-This is identical to the mel filters used for Whisper training and inference (`mel_80=librosa.filters.mel(sr=16000, n_fft=400, n_mels=80)`).
+Mel filter banks are within 1.0e-7 of `librosa.filters.mel` and identical to
+the GGML model-embedded filters used by whisper.cpp.
 
-Tested against https://github.com/openai/whisper/whisper/assets/mel_filters.npz
-# mel_spec
+#### stft
+
+A stft implementation that allows creating spectrograms from an audio steam -
+near identical to those produced by whisper.cpp internally.
+
+An example of whisper inference from mel spectrograms via `whisper-rs` can be
+found in the tests.
