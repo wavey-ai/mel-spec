@@ -142,8 +142,7 @@ pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
 ///  matching the format of the whisper.cpp C mel.data array.
 pub fn interleave_frames(frames: &Vec<Array2<f64>>, major_row_order: bool) -> Vec<f32> {
     let num_frames = frames.len();
-    assert!(num_frames > 0, "interleave_frames called with empty frames");
-
+    assert!(num_frames > 0, "frames is empty");
     let num_filters = frames[0].shape()[0];
 
     let mut interleaved_data = Vec::with_capacity(num_frames * num_filters);
@@ -206,20 +205,34 @@ pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array
     weights
 }
 
+const SCALE_FACTOR: f32 = 1_000_000.0; // 10^6
+
+fn to_fixed_point(mel: &Vec<f32>) -> Vec<i16> {
+    mel.iter()
+        .map(|v| (v * SCALE_FACTOR).round() as i16)
+        .collect()
+}
+
+fn from_fixed_point(mel: &Vec<i16>) -> Vec<f32> {
+    mel.iter().map(|v| (*v as f32 / SCALE_FACTOR)).collect()
+}
+
 /// it's unclear if this is required - whisper.cpp works fine without padding.
-pub fn pad_or_trim(array: &Array2<f32>, length: usize) -> Array2<f32> {
-    let array_shape = array.shape();
-    let original_length = array_shape[1];
+pub fn pad_or_trim(array: &[f32], length: usize) -> Vec<f32> {
+    let original_length = array.len();
 
     if original_length > length {
-        return array.slice(s![.., ..length]).to_owned();
+        return array[..length].to_vec();
     } else if original_length < length {
         let pad_width = length - original_length;
-        let pad_array = Array2::<f32>::zeros((array_shape[0], pad_width));
-        return concatenate![Axis(1), array.view(), pad_array.view()].to_owned();
+        let pad_array = vec![0.0; pad_width];
+        let mut concatenated = Vec::with_capacity(length);
+        concatenated.extend_from_slice(array);
+        concatenated.extend(pad_array);
+        return concatenated;
     }
 
-    array.to_owned()
+    array.to_vec()
 }
 
 fn hz_to_mel(frequency: f64, htk: bool) -> f64 {
@@ -282,7 +295,7 @@ mod tests {
     use ndarray_npy::NpzReader;
     use std::fs::File;
     use std::io::Read;
-    //    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
+    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
     struct AudioFileData {
         bits_per_sample: u8,
@@ -471,38 +484,43 @@ mod tests {
             // its sufficent to normalise this example in very small chunks of hop size but this
             // might not always be the most appropriate sample size.
             let norm = norm_mel(&mel);
-            mels.push(mel);
+            mels.push(norm);
         }
 
         // alternatively, you could normalise the interleaved frames here.
-        let mel_spectrogram = interleave_frames(&mels, true);
-        // add whisper-rs to continue this example
+        let mel_spectrogram = interleave_frames(&mels, false);
 
-        /*
-                // let's send the mel spectrogram straight to the whisper model, by-passing any audio
-                // processing in C
-                let ctx = WhisperContext::new("../../whisper.cpp/models/ggml-medium.en.bin")
-                    .expect("failed to load model");
-                let mut state = ctx.create_state().expect("failed to create key");
+        let fp = to_fixed_point(&mel_spectrogram);
+        // let's send the mel spectrogram straight to the whisper model, by-passing any audio
+        // processing in C
+        let ctx = WhisperContext::new("../../whisper.cpp/models/ggml-medium.en.bin")
+            .expect("failed to load model");
+        let mut state = ctx.create_state().expect("failed to create key");
 
-                // set the spectrogram directly to the whisper state
-                state.set_mel(&mel_spectrogram).unwrap();
-                let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+        // set the spectrogram directly to the whisper state
+        state.set_mel(&mel_spectrogram).unwrap();
 
-                // empty audio - whisper.cpp won't overwrite the mel state unless there are audio samples.
-                let empty = vec![0.0; 0];
-                state.full(params, &empty[..]).unwrap();
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+        params.set_n_threads(4);
+        params.set_single_segment(true);
+        params.set_language(Some("en"));
+        params.set_print_special(true);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
 
-                let num_segments = state
-                    .full_n_segments()
-                    .expect("failed to get number of segments");
-                for i in 0..num_segments {
-                    let got = state
-                        .full_get_segment_text(i)
-                        .expect("failed to get segment");
+        // empty audio - whisper.cpp won't overwrite the mel state unless there are audio samples.
+        let empty = vec![0.0; 0];
 
-                    assert_eq!(got, "[_BEG_] And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.[_TT_550]");
-                }
-        */
+        state.full(params, &empty[..]).unwrap();
+        let num_segments = state
+            .full_n_segments()
+            .expect("failed to get number of segments");
+        assert_eq!(num_segments, 1);
+
+        let got = state
+            .full_get_segment_text(0)
+            .expect("failed to get segment");
+        assert_eq!(got, "[_BEG_] And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.[_TT_550]");
     }
 }
