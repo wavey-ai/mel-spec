@@ -86,6 +86,7 @@ mod tests {
 
         let file_path = "./test/quantized_mel.tga";
         let range = save_tga_8bit(&mel_spectrogram, 80, file_path).unwrap();
+
         let dequantized_mel = load_tga_8bit(file_path, &range).unwrap();
 
         let ctx =

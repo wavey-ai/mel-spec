@@ -17,7 +17,7 @@ pub struct AudioProcessor {
 /// stream-based stft processor.
 /// Nearly identical to whisper.cpp, pytorch, etc, but the caller might be mindful of the
 /// first and final frames:
-///   a) pass in exact FTT-size sample for initial window to avoid automatic zero-padding
+///   a) pass in exact fft-size sample for initial window to avoid automatic zero-padding
 ///   b) be aware the final frame will be zero-padded if it is < hop size.
 ///     - neither is necessary unless you are running additional analysis.
 impl AudioProcessor {
@@ -40,7 +40,7 @@ impl AudioProcessor {
     }
 
     /// add new samples, get an FFT out.
-    /// ~580 microseconds (ftt_size=400) on M2 Air.
+    /// ~580 microseconds (fft_size=400) on M2 Air.
     pub fn add(&mut self, data: &Vec<f32>) -> Array1<Complex<f64>> {
         let fft_size = self.fft_size;
         let hop_size = self.hop_size;
