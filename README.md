@@ -71,7 +71,7 @@ these spectorgrams are invariant to 8-bit quantisation: we can save them
 as 8-bit images and not lose useful information - not lose any *actual*
 information about the sound wave at all.
 
-Heisenberg's Uncertainty Principal puts a limit on how much resolution a
+Heisenberg's Uncertainty Principle puts a limit on how much resolution a
 spectrogram can have - the more we zoom in on a wave, the more blurry it
 becomes. 
 
