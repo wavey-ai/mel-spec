@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 
+#[derive(Debug)]
 pub struct QuantizationRange {
     pub min: f32,
     pub max: f32,
@@ -54,7 +55,7 @@ pub fn load_tga_8bit(path: &str, range: &QuantizationRange) -> io::Result<Vec<f3
     Ok(mel)
 }
 
-fn quantize(frame: &Vec<f32>) -> (Vec<u8>, QuantizationRange) {
+pub fn quantize(frame: &Vec<f32>) -> (Vec<u8>, QuantizationRange) {
     let mut result: Vec<u8> = Vec::new();
     let min = frame.iter().copied().fold(f32::INFINITY, f32::min);
     let max = frame.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -68,7 +69,7 @@ fn quantize(frame: &Vec<f32>) -> (Vec<u8>, QuantizationRange) {
     (result, QuantizationRange { min, max })
 }
 
-fn dequantize(data: &[u8], range: &QuantizationRange) -> Vec<f32> {
+pub fn dequantize(data: &[u8], range: &QuantizationRange) -> Vec<f32> {
     let mut result = Vec::with_capacity(data.len());
     let scale = (range.max - range.min) / 255.0;
 

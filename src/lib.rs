@@ -5,18 +5,23 @@ mod stft;
 
 #[cfg(test)]
 mod tests {
-    use ndarray::Array2;
+    use ndarray::{Array1, Array2};
     use ndarray_npy::NpzReader;
     use std::fs::File;
 
     use crate::assert_nearby;
     use crate::helpers::*;
     use crate::mel::{interleave_frames, log_mel_spectrogram, mel, norm_mel};
-    use crate::quant::{load_tga_8bit, save_tga_8bit};
+    use crate::quant::{load_tga_8bit, quantize, save_tga_8bit};
     use crate::stft::AudioProcessor;
 
     use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
+    fn round_vec_to_precision(vec: &mut Vec<f32>, precision: f32) {
+        for value in vec.iter_mut() {
+            *value = (*value / precision).round() * precision;
+        }
+    }
     #[test]
     fn test_mel() {
         // whisper mel filterbank
@@ -82,12 +87,16 @@ mod tests {
         }
 
         // alternatively, you could normalise the interleaved frames here.
-        let mel_spectrogram = interleave_frames(&mels, false);
+        let mut mel_spectrogram = interleave_frames(&mels, false);
 
         let file_path = "./test/quantized_mel.tga";
-        let range = save_tga_8bit(&mel_spectrogram, 80, file_path).unwrap();
-
+        let range = save_tga_8bit(&mel_spectrogram, n_mels, file_path).unwrap();
         let dequantized_mel = load_tga_8bit(file_path, &range).unwrap();
+        assert_nearby!(
+            Array1::from(mel_spectrogram.clone()),
+            Array1::from(dequantized_mel.clone()),
+            1.0e-2
+        );
 
         let ctx =
             WhisperContext::new("/Users/jamieb/wavey.ai/whisper.cpp/models/ggml-medium.en.bin")
