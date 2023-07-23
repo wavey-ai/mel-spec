@@ -1,4 +1,4 @@
-## Mel Spec
+# Mel Spec
 
 A Rust implementation of mel spectrograms aligned to the results from the
 whisper.cpp, pytorch and librosa reference implementations and suited to
@@ -15,8 +15,8 @@ streaming audio.
 ![image](./doc/not.png)
 `[_BEG_] NOT![_TT_25]`
 
-Mel spectrograms can be used as the primary API for inference: encode
-once, retrieve for interence.
+Mel spectrograms can be used as a primary API for whisper: encode once,
+retrieve for inference.
 
 There is zero information loss with respect to the model's view on the
 original audio data - but 10x data saving, before compression.
@@ -26,12 +26,12 @@ original audio data - but 10x data saving, before compression.
     - expensive to reprocess
     - resource intensive to keep PCM in-band for overlapping
 
-#### mel filter banks
+### mel filter banks
 
 Mel filter banks are within 1.0e-7 of `librosa.filters.mel` and identical to
 the GGML model-embedded filters used by whisper.cpp.
 
-#### stft - FFT on a stream with overlapping windows
+### stft - FFT on a stream with overlapping windows
 
 A stft implementation that allows creating spectrograms from an audio steam -
 near identical to those produced by whisper.cpp internally.
@@ -39,7 +39,7 @@ near identical to those produced by whisper.cpp internally.
 An example of whisper inference from mel spectrograms via `whisper-rs` can be
 found in the tests.
 
-#### quantisation
+### quantisation
 
 Mel spectorgrams can be saved in Tga format - an uncompressed image format
 supported by OSX and Windows.
@@ -55,7 +55,7 @@ let dequantized_mel = load_tga_8bit(file_path, &range).unwrap();
 state.set_mel(&dequantized_mel).unwrap();
 ```
 
-### using with whisper-rs and whisper.cpp
+## using with whisper-rs and whisper.cpp
 
 Please refer to these PRs, both whisper.cpp and whisper-rs require small
 changes:
@@ -64,7 +64,7 @@ changes:
 https://github.com/ggerganov/whisper.cpp/pull/1130
 
 
-#### Discussion
+### Discussion
 
 whisper.cpp produces mel spectrograms with 1.0e-6 precision. However,
 these spectorgrams are invariant to 8-bit quantisation: we can save them
