@@ -129,6 +129,34 @@ pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array
     weights
 }
 
+pub fn chunk_frames(frames: Vec<f32>, n_mels: usize, stride_size: usize) -> Vec<Vec<f32>> {
+    let width = frames.len() / n_mels;
+    let height = n_mels;
+
+    // Create a 2D ndarray from the image data
+    let ndarray_image = Array2::from_shape_vec((height, width), frames).unwrap();
+
+    // Create a vector to store the chunks
+    let mut chunks = Vec::new();
+
+    // Chunk the frames array into smaller strides
+    for y in (0..height).step_by(stride_size) {
+        for x in (0..width).step_by(stride_size) {
+            let end_y = (y + stride_size).min(height);
+            let end_x = (x + stride_size).min(width);
+
+            // Create a 2D slice representing the chunk and flatten it into a Vec<f32>
+            let chunk = ndarray_image
+                .slice(s![y..end_y, x..end_x])
+                .to_owned()
+                .into_raw_vec();
+            chunks.push(chunk);
+        }
+    }
+
+    chunks
+}
+
 /// it's unclear if this is required - whisper.cpp works fine without padding.
 pub fn pad_or_trim(array: &[f32], length: usize) -> Vec<f32> {
     let original_length = array.len();

@@ -7,7 +7,7 @@ pub struct QuantizationRange {
     pub max: f32,
 }
 
-pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<QuantizationRange> {
+pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> {
     let width = (data.len() / n_mels) as u16;
     let height = n_mels as u16;
     let tga_size = (width as usize) * (height as usize);
@@ -20,14 +20,17 @@ pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<Quan
 
     // TGA Header (18 bytes)
     let mut tga_header = Vec::with_capacity(18);
-    tga_header.extend_from_slice(&[0u8; 2]); // ID len, color map type (unused)
+    tga_header.push(8u8); // ID len
+    tga_header.push(0u8); // color map type (unused)
     tga_header.push(3u8); // Uncompressed, black and white images.
     tga_header.extend_from_slice(&[0u8; 5]); // color map spec (unused)
     tga_header.extend_from_slice(&[0u8; 4]); // X and Y Origin (unused)
     tga_header.extend_from_slice(&width.to_le_bytes()); // Image Width (little-endian)
     tga_header.extend_from_slice(&height.to_le_bytes()); // Image Height (little-endian)
     tga_header.push(8u8); // Bits per Pixel (8 bits)
-    tga_header.push(0u8); // Image Descriptor Byte
+    tga_header.push(0u8);
+    tga_header.extend_from_slice(&range.min.to_le_bytes());
+    tga_header.extend_from_slice(&range.max.to_le_bytes());
 
     // Combine the TGA header and image data and save to the file
     let mut tga_image = Vec::new();
@@ -37,15 +40,25 @@ pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<Quan
     let mut file = File::create(path)?;
     file.write_all(&tga_image)?;
 
-    Ok(range)
+    Ok(())
 }
 
-pub fn load_tga_8bit(path: &str, range: &QuantizationRange) -> io::Result<Vec<f32>> {
+pub fn load_tga_8bit(path: &str) -> io::Result<Vec<f32>> {
     let mut file = File::open(path)?;
     let mut tga_data = Vec::new();
+    let mut min_bytes = [0u8; 4];
+    let mut max_bytes = [0u8; 4];
 
-    // Skip the TGA header (18 bytes) as we don't need it for raw image data extraction
+    // discard TGA header
     file.read_exact(&mut [0; 18])?;
+
+    file.read_exact(&mut min_bytes)?;
+    file.read_exact(&mut max_bytes)?;
+
+    let min = f32::from_le_bytes(min_bytes);
+    let max = f32::from_le_bytes(max_bytes);
+
+    let range = QuantizationRange { min, max };
 
     // Read the rest of the file (image data) into the tga_data vector
     file.read_to_end(&mut tga_data)?;

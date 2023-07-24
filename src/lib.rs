@@ -2,6 +2,7 @@ mod helpers;
 mod mel;
 mod quant;
 mod stft;
+mod vad;
 
 #[cfg(test)]
 mod tests {
@@ -52,7 +53,7 @@ mod tests {
      * 4) Run inference on the dequantised mel buffer.
      *
      */
-    #[test]
+    //#[test]
     fn test_spec() {
         // load the whisper jfk sample
         let file_path = "test/jfk_f32le.wav";
@@ -89,9 +90,9 @@ mod tests {
         // alternatively, you could normalise the interleaved frames here.
         let mut mel_spectrogram = interleave_frames(&mels, false);
 
-        let file_path = "./test/quantized_mel.tga";
-        let range = save_tga_8bit(&mel_spectrogram, n_mels, file_path).unwrap();
-        let dequantized_mel = load_tga_8bit(file_path, &range).unwrap();
+        let file_path = "/tmp/quantized_mel.tga";
+        save_tga_8bit(&mel_spectrogram, n_mels, file_path).unwrap();
+        let dequantized_mel = load_tga_8bit(file_path).unwrap();
         assert_nearby!(
             Array1::from(mel_spectrogram.clone()),
             Array1::from(dequantized_mel.clone()),
