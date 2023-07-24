@@ -6,6 +6,9 @@ streaming audio.
 
 ### Whisper inference with 8-bit images (or bytestreams)
 
+Passing whisper.cpp mel spectrogram segments directly (via whisper-rs's
+set_mel binding):
+
 ![image](./doc/fellow_americans.png)
 `[_BEG_] fellow Americans.[_TT_43]`
 
@@ -15,11 +18,35 @@ streaming audio.
 ![image](./doc/not.png)
 `[_BEG_] NOT![_TT_25]`
 
-Mel spectrograms can be used as a primary API for whisper: encode once,
-retrieve for inference.
+Mel spectrograms can be used as a primary API for whisper: encode once - in
+real-time - retrieve for inference.
 
-There is zero information loss with respect to the model's view on the
-original audio data - but 10x data saving, before compression.
+This also opens up interesting possibilities for real-time inference - rather
+than looking for attack transients in PCM for voice activity detection - urgh -
+we can use edge detection! 
+
+The `edge_detect` method takes a Mel spectorgram of any size and demarcates the
+time indexes that don't have gradients interecting them. Due to the strucutre
+of mel spectrograms, gradients can be used as a proxy for speech:
+
+![image](./doc/jfk_vad_boundaries.png)
+
+(The Sobel operator works remarkably well for this and has real-time speed.)
+
+In a real-time scenario we might choose to send data to whipser, say, whenever
+we encounter a non-intersection and have accumulated at least a seocnd of
+spectrogram data.
+
+```
+let dequantized_mel = load_tga_8bit(file_path).unwrap();
+let edge_info = edge_detect(&dequantized_mel, n_mels, 1.0, 5);
+```
+
+(See vda.rs [vda.rs](./src/vda.rs))
+
+With quantised mel spectrograms there is zero information loss with respect to
+the model's view on the original audio data - but 10x data saving, before
+compression.
 
 * Mel spectrograms encode at 6.4Kb /sec (80 * 2 bytes * 40 frames)
 * Float PCM required by whispser audio APIs is 64Kb /sec at 16Khz
