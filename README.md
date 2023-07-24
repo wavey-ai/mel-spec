@@ -25,16 +25,16 @@ This also opens up interesting possibilities for real-time inference - rather
 than looking for attack transients in PCM for voice activity detection - urgh -
 we can use edge detection! 
 
-The `edge_detect` method takes a Mel spectorgram of any size and demarcates the
-time indexes that don't have gradients interecting them. Due to the strucutre
-of mel spectrograms, gradients can be used as a proxy for speech:
+The `vad_boundaries` method takes a Mel spectrogram of any size and demarcates
+the time indexes that aren't intersected by feature gradients. Due to the
+structure of mel spectrograms, such gradients can be used as a proxy for speech:
 
 ![image](./doc/jfk_vad_boundaries.png)
 
 (The Sobel operator works remarkably well for this and has real-time speed.)
 
-In a real-time scenario we might choose to send data to whipser, say, whenever
-we encounter a non-intersection and have accumulated at least a seocnd of
+In a real-time scenario we might choose to send data to whisper, say, whenever
+we encounter a non-intersection and have accumulated at least a second of
 spectrogram data.
 
 ```
@@ -50,8 +50,8 @@ compression.
 
 * Mel spectrograms encode at 6.4Kb /sec (80 * 2 bytes * 40 frames)
 * Float PCM required by whispser audio APIs is 64Kb /sec at 16Khz
-    - expensive to reprocess
-    - resource intensive to keep PCM in-band for overlapping
+    - expensive to reprocess
+    - resource intensive to keep PCM in-band for overlapping
 
 ### mel filter banks
 
@@ -68,7 +68,7 @@ found in the tests.
 
 ### quantisation
 
-Mel spectorgrams can be saved in Tga format - an uncompressed image format
+Mel spectrograms can be saved in Tga format - an uncompressed image format
 supported by OSX and Windows.
 
 Tga images can be created from any audio input, cropped in Photoshop and reused:
@@ -94,7 +94,7 @@ https://github.com/ggerganov/whisper.cpp/pull/1130
 ### Discussion
 
 whisper.cpp produces mel spectrograms with 1.0e-6 precision. However,
-these spectorgrams are invariant to 8-bit quantisation: we can save them
+these spectrograms are invariant to 8-bit quantisation: we can save them
 as 8-bit images and not lose useful information - not lose any *actual*
 information about the sound wave at all.
 
@@ -110,39 +110,39 @@ Indeed, *we only need 1.0e-1 precision to get accurate results*, and
 rounding to 1.0e-1 seems more accurate for some difficult transcriptions.
 
 
-Consider these samples from the jfk speech used in the orignal whisper.py
+Consider these samples from the jfk speech used in the original whisper.py
 tests:
 
 ```
 [src/lib.rs:93] &mel_spectrogram[10..20] = [
-    0.15811597,
-    0.26561865,
-    0.07558561,
-    0.19564378,
-    0.16745868,
-    0.21617787,
-    -0.29193184,
-    0.12279237,
-    0.13897367,
-    -0.17434756,
+    0.15811597,
+    0.26561865,
+    0.07558561,
+    0.19564378,
+    0.16745868,
+    0.21617787,
+    -0.29193184,
+    0.12279237,
+    0.13897367,
+    -0.17434756,
 ]
 ```
 ```
 [src/lib.rs:92] &mel_spectrogram_rounded[10..20] = [
-    0.2,
-    0.3,
-    0.1,
-    0.2,
-    0.2,
-    0.2,
-    -0.3,
-    0.1,
-    0.1,
-    -0.2,
+    0.2,
+    0.3,
+    0.1,
+    0.2,
+    0.2,
+    0.2,
+    -0.3,
+    0.1,
+    0.1,
+    -0.2,
 ]
 ```
 
-Once quantised, the spectrgrams are the same:
+Once quantised, the spectrograms are the same:
 
 ![image](./doc/quantized_mel.png)
 ![image](./doc/quantized_mel_e1.png)
@@ -153,4 +153,3 @@ the frequency domain, and how effectively the mel scale divides those
 frequencies into 80 bins. 8-bytes of 0-255 grayscale is probably
 overkill even to measure the total power in each of those bins - it
 could be compressed even further.
-
