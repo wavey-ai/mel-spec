@@ -42,7 +42,7 @@ let dequantized_mel = load_tga_8bit(file_path).unwrap();
 let edge_info = edge_detect(&dequantized_mel, n_mels, 1.0, 5);
 ```
 
-(See vda.rs [vda.rs](./src/vda.rs))
+(See vad.rs [vda.rs](./src/vad.rs))
 
 With quantised mel spectrograms there is zero information loss with respect to
 the model's view on the original audio data - but 10x data saving, before
