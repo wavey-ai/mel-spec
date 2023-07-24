@@ -53,7 +53,7 @@ mod tests {
      * 4) Run inference on the dequantised mel buffer.
      *
      */
-    //#[test]
+    #[test]
     fn test_spec() {
         // load the whisper jfk sample
         let file_path = "test/jfk_f32le.wav";

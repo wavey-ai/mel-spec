@@ -7,7 +7,7 @@ pub struct EdgeInfo {
 }
 
 /// turns out edge detection is a reliable way of doing word boundary detection in real-time
-fn edge_detect(
+fn vad_boundaries(
     frames: &[f32],
     n_mels: usize,
     threshold: f32,
@@ -104,12 +104,12 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_edges() {
+    fn test_vad_boundaries() {
         let n_mels = 80;
         let file_path = "./test/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
         let start_time = Instant::now();
-        let edge_info = edge_detect(&dequantized_mel, n_mels, 1.0, 5);
+        let edge_info = vad_boundaries(&dequantized_mel, n_mels, 1.0, 5);
         let elapsed_time = start_time.elapsed().as_millis();
         dbg!(elapsed_time);
         let file_path = "./doc/jfk_vad_boundaries.png";
