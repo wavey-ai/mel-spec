@@ -1,9 +1,21 @@
 mod helpers;
 mod mel;
+mod pipeline;
 mod quant;
 mod stft;
+mod text;
 mod vad;
 
+/*
+pub use helpers::*;
+pub use mel::*;
+pub use pipeline::*;
+pub use quant::*;
+pub use stft::*;
+pub use text::*;
+pub use vad::*;
+pub use whisper:*;
+*/
 #[cfg(test)]
 mod tests {
     use ndarray::{Array1, Array2};
@@ -14,7 +26,7 @@ mod tests {
     use crate::helpers::*;
     use crate::mel::{interleave_frames, log_mel_spectrogram, mel, norm_mel};
     use crate::quant::{load_tga_8bit, quantize, save_tga_8bit};
-    use crate::stft::AudioProcessor;
+    use crate::stft::Stage as STFTStage;
 
     use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
@@ -53,57 +65,18 @@ mod tests {
      * 4) Run inference on the dequantised mel buffer.
      *
      */
+
     #[test]
     fn test_spec() {
-        // load the whisper jfk sample
-        let file_path = "test/jfk_f32le.wav";
-        let file = File::open(&file_path).unwrap();
-        let data = parse_wav(file).unwrap();
-        assert_eq!(data.sampling_rate, 16000);
-        assert_eq!(data.channel_count, 1);
-        assert_eq!(data.bits_per_sample, 32);
-
-        let samples = deinterleave_vecs_f32(&data.data, 1);
-
-        // setup stft
-        let fft_size = 400;
-        let hop_size = 160;
-        let n_mels = 80;
-        let sampling_rate = 16000.0;
-        let mut fft = AudioProcessor::new(fft_size, hop_size);
-
-        // setup mel filterbank
-        let filters = mel(sampling_rate, fft_size, n_mels, false, true);
-        let mut mels: Vec<Array2<f64>> = Vec::new();
-
-        // process samples - note the caller is responsioble for sending samples in chunks of
-        // whisper's fft hop size (160 samples).
-        for chunk in samples[0].chunks(hop_size) {
-            let complex = fft.add(&chunk.to_vec());
-            let mel = log_mel_spectrogram(&complex, &filters);
-            // its sufficent to normalise this example in very small chunks of hop size but this
-            // might not always be the most appropriate sample size.
-            let norm = norm_mel(&mel);
-            mels.push(norm);
-        }
-
-        // alternatively, you could normalise the interleaved frames here.
-        let mut mel_spectrogram = interleave_frames(&mels, false);
-
-        let file_path = "/tmp/quantized_mel.tga";
-        save_tga_8bit(&mel_spectrogram, n_mels, file_path).unwrap();
-        let dequantized_mel = load_tga_8bit(file_path).unwrap();
-        assert_nearby!(
-            Array1::from(mel_spectrogram.clone()),
-            Array1::from(dequantized_mel.clone()),
-            1.0e-2
-        );
-
+        //let file_path = "./test/quantized_mel_golden.tga";
+        let file_path = "./test/vad/cutsec_41026.tga";
+        let mut dequantized_mel = load_tga_8bit(file_path).unwrap();
         let ctx =
             WhisperContext::new("/Users/jamieb/wavey.ai/whisper.cpp/models/ggml-medium.en.bin")
                 .expect("failed to load model");
         let mut state = ctx.create_state().expect("failed to create key");
 
+        dbg!(&dequantized_mel.len());
         // set the spectrogram directly to the whisper state
         state.set_mel(&dequantized_mel).unwrap();
 

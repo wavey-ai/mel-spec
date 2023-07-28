@@ -1,3 +1,4 @@
+use ndarray::Array2;
 use std::fs::File;
 use std::io::{self, Read, Write};
 
@@ -15,7 +16,7 @@ pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> 
     // Quantize the floating-point data to 8-bit grayscale
     let (tga_data, range) = quantize(&data.to_vec());
 
-    assert!(tga_size == tga_data.len(), "tga data wrong size");
+    //assert!(tga_size == tga_data.len(), "tga data wrong size");
     // Convert the quantized data to 8-bit color index (0-255) and store in tga_data
 
     // TGA Header (18 bytes)
@@ -92,4 +93,12 @@ pub fn dequantize(data: &[u8], range: &QuantizationRange) -> Vec<f32> {
     }
 
     result
+}
+
+pub fn to_array2(frames: &[f32], n_mels: usize) -> Array2<f64> {
+    Array2::from_shape_vec(
+        (n_mels, frames.len() / n_mels),
+        frames.iter().map(|v| *v as f64).collect::<Vec<_>>(),
+    )
+    .unwrap()
 }

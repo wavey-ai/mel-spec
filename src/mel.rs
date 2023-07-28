@@ -59,32 +59,58 @@ pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
     clamped
 }
 
-/// Interleave in major row order: ideal of waterfall representations where each row is
+/// Interleave in major column order: ideal of waterfall representations where each row is
 ///  a scanline.
-/// Interleave in major column order: Data will be interleaved such that each row
+/// Interleave in major row order: Data will be interleaved such that each row
 ///  represents a different frequency band, and each column represents a time step,
 ///  matching the format of the whisper.cpp C mel.data array.
-pub fn interleave_frames(frames: &Vec<Array2<f64>>, major_row_order: bool) -> Vec<f32> {
-    let num_frames = frames.len();
+pub fn interleave_frames(
+    frames: &[Array2<f64>],
+    major_column_order: bool,
+    min_width: usize,
+) -> Vec<f32> {
+    let mut num_frames = frames.len();
     assert!(num_frames > 0, "frames is empty");
     let num_filters = frames[0].shape()[0];
 
-    let mut interleaved_data = Vec::with_capacity(num_frames * num_filters);
+    // Calculate the combined width along Axis(1) of all frames
+    let combined_width: usize = frames.iter().map(|frame| frame.shape()[1]).sum();
 
-    if major_row_order {
-        // Interleave in major row order
+    // Determine the required padding
+    let padding = combined_width.max(min_width).saturating_sub(combined_width);
+
+    // Create a new Array2 with the required padding
+    let padded_frame = Array2::from_shape_fn((num_filters, padding), |(_, _)| 0.0);
+
+    // Insert the padded frame to the end of the frames array if padding is needed
+    let mut frames_with_padding = frames.to_vec();
+    if padding > 0 {
+        frames_with_padding.push(padded_frame);
+        num_frames += 1;
+    }
+
+    let mut interleaved_data =
+        Vec::with_capacity(num_frames * num_filters * (combined_width + padding));
+
+    if major_column_order {
         for frame_idx in 0..num_frames {
             for filter_idx in 0..num_filters {
-                let frame_view = ArrayView2::from(&frames[frame_idx]);
-                interleaved_data.push(*frame_view.get((filter_idx, 0)).unwrap() as f32);
+                let frame_view = ArrayView2::from(&frames_with_padding[frame_idx]);
+                let frame_width = frame_view.shape()[1];
+                for x in 0..frame_width {
+                    interleaved_data.push(*frame_view.get((filter_idx, x)).unwrap() as f32);
+                }
             }
         }
     } else {
-        // Interleave in major column order - whisper.cpp
+        // Interleave in major row order
         for filter_idx in 0..num_filters {
             for frame_idx in 0..num_frames {
-                let frame_view = ArrayView2::from(&frames[frame_idx]);
-                interleaved_data.push(*frame_view.get((filter_idx, 0)).unwrap() as f32);
+                let frame_view = ArrayView2::from(&frames_with_padding[frame_idx]);
+                let frame_width = frame_view.shape()[1];
+                for x in 0..frame_width {
+                    interleaved_data.push(*frame_view.get((filter_idx, x)).unwrap() as f32);
+                }
             }
         }
     }
@@ -129,7 +155,11 @@ pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array
     weights
 }
 
-pub fn chunk_frames(frames: Vec<f32>, n_mels: usize, stride_size: usize) -> Vec<Vec<f32>> {
+pub fn chunk_frames_into_strides(
+    frames: Vec<f32>,
+    n_mels: usize,
+    stride_size: usize,
+) -> Vec<Vec<f32>> {
     let width = frames.len() / n_mels;
     let height = n_mels;
 
@@ -157,7 +187,6 @@ pub fn chunk_frames(frames: Vec<f32>, n_mels: usize, stride_size: usize) -> Vec<
     chunks
 }
 
-/// it's unclear if this is required - whisper.cpp works fine without padding.
 pub fn pad_or_trim(array: &[f32], length: usize) -> Vec<f32> {
     let original_length = array.len();
 
@@ -229,9 +258,28 @@ fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
     freqs
 }
 
+pub struct Stage {
+    filters: Array2<f64>,
+}
+
+impl Stage {
+    pub fn new(fft_size: usize, hop_size: usize, sampling_rate: f64, n_mels: usize) -> Self {
+        let filters = mel(sampling_rate, fft_size, n_mels, false, true);
+        Self { filters }
+    }
+
+    pub fn add(&mut self, fft: Array1<Complex<f64>>) -> Array2<f64> {
+        let mel = log_mel_spectrogram(&fft, &self.filters);
+        let norm = norm_mel(&mel);
+        norm
+    }
+}
+
 mod tests {
     use super::*;
     use crate::assert_nearby;
+    use ndarray_npy::NpzReader;
+    use std::fs::File;
 
     #[test]
     fn test_hz_to_mel() {
@@ -282,5 +330,20 @@ mod tests {
         ]);
         let got = fft_frequencies(sr, n_fft);
         assert_nearby!(got, want, 0.001);
+    }
+
+    #[test]
+    fn test_mel() {
+        // whisper mel filterbank
+        let file_path = "test/mel_filters.npz";
+        let f = File::open(file_path).unwrap();
+        let mut npz = NpzReader::new(f).unwrap();
+        let filters: Array2<f32> = npz.by_index(0).unwrap();
+        let want: Array2<f64> = filters.mapv(|x| f64::from(x));
+        let got = mel(16000.0, 400, 80, false, true);
+        assert_eq!(got.shape(), vec![80, 201]);
+        for i in 0..80 {
+            assert_nearby!(got.row(i), want.row(i), 1.0e-7);
+        }
     }
 }
