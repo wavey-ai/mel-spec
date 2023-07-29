@@ -1,21 +1,22 @@
-[package]
-name = "mel_spec"
+[workspace]
+resolver = "2"
+members = [
+  "mel_spec",
+  "mel_spec_pipeline",
+  "mel_spec_audio",
+]
+
+exclude = ["examples"]
+
+[workspace.package]
 version = "0.2.0"
-edition = "2021"
-license = "MIT"
-description = "Mel spectrograms aligned to the results from the whisper.cpp, pytorch and librosa reference implementations and suited to streaming audio."
-repository = "https://github.com/wavey-ai/mel-spec"
-readme = "README.md"
 
-[dependencies]
-image = "0.24.6"
-ndarray = "0.15.6"
-ndarray-npy = "0.8.1"
-num = "0.4.1"
-rustfft = "6.1.0"
+[workspace.dependencies]
+mel_spec = { path = "./mel_spec", version = "0.2.0" }
+mel_spec_pipeline = { path = "./mel_spec_pipeline", version = "0.2.0" }
+mel_spec_audio = { path = "./mel_spec_audio", version = "0.2.0" }
 
-[target.aarch64-apple-darwin]
-rustflags = "-lc++ -l framework=Accelerate"
- 
-[dev-dependencies]
-whisper-rs = { path = "../whisper-rs", features = ["coreml"] }
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 'z'
