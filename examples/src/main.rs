@@ -31,7 +31,7 @@ fn main() {
     let sampling_rate = 16000.0;
 
     let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-    let vad_settings = DetectionSettings::new(1.0, 5, 10, 0, 100);
+    let vad_settings = DetectionSettings::new(1.0, 4, 10, 0, 100);
 
     let config = PipelineConfig::new(mel_settings, vad_settings);
 
@@ -75,7 +75,8 @@ fn main() {
 
     handles.push(handle);
 
-    const LEN: usize = 1024 * 10;
+    // read audio from pipe
+    const LEN: usize = 1024;
     let mut input: Box<dyn Read> = Box::new(io::stdin());
 
     let mut buffer = [0; LEN];
@@ -92,7 +93,7 @@ fn main() {
 
         if bytes_read == LEN {
             let samples = deinterleave_vecs_f32(&buffer, 1);
-            for chunk in samples[0].chunks(LEN) {
+            for chunk in samples[0].chunks(1024 / 4) {
                 pipeline.send_pcm(chunk);
             }
             bytes_read = 0;
@@ -101,7 +102,7 @@ fn main() {
 
     if bytes_read > 0 {
         let samples = deinterleave_vecs_f32(&buffer[..bytes_read], 1);
-        for chunk in samples[0].chunks(bytes_read) {
+        for chunk in samples[0].chunks(bytes_read / 4) {
             pipeline.send_pcm(chunk);
         }
     }

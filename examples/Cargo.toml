@@ -13,7 +13,7 @@ mel_spec = { path = "../mel_spec" }
 mel_spec_pipeline = { path = "../mel_spec_pipeline"}
 mel_spec_audio = { path = "../mel_spec_audio"}
 
-whisper-rs = { path = "../../whisper-rs" }
+whisper-rs = { path = "../../whisper-rs", features = ["coreml"]}
 structopt = "0.3.26"
 
 [[bin]]
