@@ -3,7 +3,7 @@ use mel_spec::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-struct PipelineConfig {
+pub struct PipelineConfig {
     vad_settings: DetectionSettings,
     mel_settings: MelConfig,
 }
@@ -17,7 +17,7 @@ impl PipelineConfig {
     }
 }
 
-struct Pipeline {
+pub struct Pipeline {
     // we drop data_tx by setting it to None, thereby removing all references to it.
     data_tx: Option<Sender<Vec<f32>>>,
     data_rx: Receiver<Vec<f32>>,
@@ -33,7 +33,7 @@ struct Pipeline {
 /// would be separate input and output stages decoupled from this pipeline.
 /// See examples folder.
 impl Pipeline {
-    fn new(config: PipelineConfig) -> Self {
+    pub fn new(config: PipelineConfig) -> Self {
         let (data_tx, data_rx): (Sender<Vec<f32>>, Receiver<Vec<f32>>) = unbounded();
         let (stt_tx, stt_rx): (Sender<(usize, Vec<f32>)>, Receiver<(usize, Vec<f32>)>) =
             unbounded();
@@ -67,7 +67,7 @@ impl Pipeline {
     }
 
     /// start background threads
-    fn start(&mut self) -> Vec<thread::JoinHandle<()>> {
+    pub fn start(&mut self) -> Vec<thread::JoinHandle<()>> {
         // avoid cloning self
         let fft_size = self.config.mel_settings.fft_size();
         let hop_size = self.config.mel_settings.hop_size();
