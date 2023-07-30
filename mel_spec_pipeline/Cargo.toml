@@ -1,0 +1,18 @@
+[package]
+name = "mel_spec_pipeline"
+version = "0.2.1"
+edition = "2021"
+license = "MIT"
+description = "Audio-to-Mel pipeline"
+repository = "https://github.com/wavey-ai/mel-spec"
+readme = "README.md"
+
+[dependencies]
+crossbeam-channel = "0.5.8"
+image = "0.24.6"
+mel_spec = { workspace = true }
+mel_spec_audio = { workspace = true }
+
+
+[target.aarch64-apple-darwin]
+rustflags = "-lc++ -l framework=Accelerate"
