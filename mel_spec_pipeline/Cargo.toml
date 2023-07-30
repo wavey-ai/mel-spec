@@ -10,7 +10,7 @@ readme = "README.md"
 [dependencies]
 crossbeam-channel = "0.5.8"
 image = "0.24.6"
-mel_spec = { workspace = true }
+mel_spec = { workspace = true, path = "../mel_spec", version = "0.2.1" }
 mel_spec_audio = { workspace = true }
 
 
