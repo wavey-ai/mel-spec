@@ -100,7 +100,7 @@ pub fn dequantize(data: &[u8], range: &QuantizationRange) -> Vec<f32> {
     result
 }
 
-/// De-interleave from major row order back into an Array2<f64>
+/// De-interleave from major row order back into an `Array2<f64>`
 pub fn to_array2(frames: &[f32], n_mels: usize) -> Array2<f64> {
     Array2::from_shape_vec(
         (n_mels, frames.len() / n_mels),
