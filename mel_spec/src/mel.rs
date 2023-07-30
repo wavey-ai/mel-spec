@@ -1,6 +1,8 @@
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
 
+/// MelSpectrogram applies a pre-computed filerbank to an FFT result.
+/// Results are identical to whisper.cpp and whisper.py
 pub struct MelSpectrogram {
     filters: Array2<f64>,
 }
@@ -18,10 +20,9 @@ impl MelSpectrogram {
     }
 }
 
-/// Rust port of whisper.cpp and whisper.py log_mel_spectrogram
-/// NB: a) normalisation is a separate step, refer to [`norm_mel`].
-///     b) the Array2 output must be correctly interleaved before processing with
-///      whisper.cpp - refer to interleave_frame.
+/// Normalisation is a separate step, see [`norm_mel`].
+/// The nomralised `Array2` output must be processed with [`interleave_frames`]
+/// before sending to whisper.cpp
 pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
     let mut magnitudes_padded = stft
         .iter()
@@ -43,10 +44,6 @@ pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64
 }
 
 /// Normalisation based on max value in the sample window.
-///
-/// Two variants of this function are provided, only one should be used in a pipeline:
-///   norm_mel: to be called on individual Array2 results from log_mel_spectrogram
-///   norm_mel_vec: to be called on the product of interleave_frames
 ///
 /// It's adequate to normalise ftt window-size sample lengths individually but larger sample
 /// sizes may sometimes give better results and these functions allow flexibility in the
@@ -206,7 +203,7 @@ pub fn chunk_frames_into_strides(
     chunks
 }
 
-fn hz_to_mel(frequency: f64, htk: bool) -> f64 {
+pub fn hz_to_mel(frequency: f64, htk: bool) -> f64 {
     if htk {
         return 2595.0 * (1.0 + (frequency / 700.0).log10());
     }
@@ -224,7 +221,7 @@ fn hz_to_mel(frequency: f64, htk: bool) -> f64 {
     }
 }
 
-fn mel_to_hz(mel: f64, htk: bool) -> f64 {
+pub fn mel_to_hz(mel: f64, htk: bool) -> f64 {
     if htk {
         return 700.0 * (10.0f64.powf(mel / 2595.0) - 1.0);
     }
@@ -242,11 +239,11 @@ fn mel_to_hz(mel: f64, htk: bool) -> f64 {
     }
 }
 
-fn mels_to_hz(mels: ArrayBase<impl Data<Elem = f64>, Ix1>, htk: bool) -> Array1<f64> {
+pub fn mels_to_hz(mels: ArrayBase<impl Data<Elem = f64>, Ix1>, htk: bool) -> Array1<f64> {
     mels.mapv(|mel| mel_to_hz(mel, htk))
 }
 
-fn mel_frequencies(n_mels: usize, fmin: f64, fmax: f64, htk: bool) -> Array1<f64> {
+pub fn mel_frequencies(n_mels: usize, fmin: f64, fmax: f64, htk: bool) -> Array1<f64> {
     let min_mel = hz_to_mel(fmin, htk);
     let max_mel = hz_to_mel(fmax, htk);
 
@@ -254,7 +251,7 @@ fn mel_frequencies(n_mels: usize, fmin: f64, fmax: f64, htk: bool) -> Array1<f64
     mels_to_hz(mels, htk)
 }
 
-fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
+pub fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
     let step = sr / n_fft as f64;
     let freqs: Array1<f64> = Array1::from_shape_fn(n_fft / 2 + 1, |i| step * i as f64);
     freqs
