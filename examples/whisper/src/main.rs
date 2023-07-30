@@ -1,11 +1,8 @@
-use crossbeam_channel::{bounded, unbounded, Receiver, RecvError, Sender};
 use mel_spec::prelude::*;
 use mel_spec::vad::{duration_ms_for_n_frames, format_milliseconds};
 use mel_spec_audio::deinterleave_vecs_f32;
 use mel_spec_pipeline::{Pipeline, PipelineConfig};
-use std::io::{self, Error, Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::io::{self, Read};
 use std::thread;
 use structopt::StructOpt;
 use whisper_rs::*;
@@ -16,14 +13,17 @@ struct Command {
     #[structopt(
         short,
         long,
-        default_value = "../../whisper.cpp/models/ggml-medium.en.bin"
+        default_value = "./../../../whisper.cpp/models/ggml-medium.en.bin"
     )]
     model_path: String,
+    #[structopt(short, long, default_value = "./mel_out")]
+    out_path: String,
 }
 
 fn main() {
     let args = Command::from_args();
     let model_path = args.model_path;
+    let mel_path = args.out_path;
 
     let fft_size = 400;
     let hop_size = 160;
@@ -45,6 +45,9 @@ fn main() {
         let mut state = ctx.create_state().expect("failed to create key");
 
         while let Ok((idx, mel)) = rx_clone.recv() {
+            let path = format!("{}/frame_{}.tga", mel_path, idx);
+            let _ = save_tga_8bit(&mel, n_mels, &path);
+
             let ms = duration_ms_for_n_frames(hop_size, sampling_rate, idx);
             let time = format_milliseconds(ms as u64);
 
@@ -94,7 +97,7 @@ fn main() {
         if bytes_read == LEN {
             let samples = deinterleave_vecs_f32(&buffer, 1);
             for chunk in samples[0].chunks(1024 / 4) {
-                pipeline.send_pcm(chunk);
+                let _ = pipeline.send_pcm(chunk);
             }
             bytes_read = 0;
         }
@@ -103,7 +106,7 @@ fn main() {
     if bytes_read > 0 {
         let samples = deinterleave_vecs_f32(&buffer[..bytes_read], 1);
         for chunk in samples[0].chunks(bytes_read / 4) {
-            pipeline.send_pcm(chunk);
+            let _ = pipeline.send_pcm(chunk);
         }
     }
 

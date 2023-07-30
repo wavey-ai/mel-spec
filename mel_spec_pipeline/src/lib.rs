@@ -27,7 +27,7 @@ pub struct Pipeline {
 }
 
 /// A simple pipeline for streaming audio in and getting speech-boundary delimited
-/// mel spectorgrams out.
+/// mel spectrograms out.
 ///
 /// Processing audio to 32f mono, and sending mel spectrograms to Speech-to-Text
 /// would be separate input and output stages decoupled from this pipeline.
@@ -90,7 +90,7 @@ impl Pipeline {
             let mut fft = Spectrogram::new(fft_size, hop_size);
             let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
             let mut vad = VoiceActivityDetector::new(&vad_settings);
-            while let Ok((idx, samples)) = pcm_rx.recv() {
+            while let Ok((_, samples)) = pcm_rx.recv() {
                 // buffer up to an initial fft window
                 if let Some(complex) = fft.add(&samples) {
                     let spec = mel.add(complex);
@@ -117,7 +117,7 @@ impl Pipeline {
                 }
             }
 
-            if let Some(stt_tx) = stt_tx_clone.lock().unwrap().take() {
+            if let Some(_) = stt_tx_clone.lock().unwrap().take() {
                 // At this point, stt_tx goes out of scope and will be dropped
                 // The lock is automatically released when stt_tx goes out of scope
             }
@@ -154,6 +154,7 @@ impl Pipeline {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use mel_spec_audio::*;
@@ -183,14 +184,14 @@ mod tests {
 
         // chunk size can be anything, 88 is random
         for chunk in samples[0].chunks(88) {
-            pl.send_pcm(chunk);
+            let _ = pl.send_pcm(chunk);
         }
 
         pl.close_ingress();
 
         let mut res = Vec::new();
 
-        while let Ok((idx, mel)) = pl.rx().recv() {
+        while let Ok((idx, _)) = pl.rx().recv() {
             res.push(idx);
         }
 

@@ -9,12 +9,12 @@ members = [
 exclude = ["examples"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 
 [workspace.dependencies]
-mel_spec = { path = "./mel_spec", version = "0.2.0" }
-mel_spec_pipeline = { path = "./mel_spec_pipeline", version = "0.2.0" }
-mel_spec_audio = { path = "./mel_spec_audio", version = "0.2.0" }
+mel_spec = { path = "./mel_spec", version = "0.2.1" }
+mel_spec_pipeline = { path = "./mel_spec_pipeline", version = "0.2.1" }
+mel_spec_audio = { path = "./mel_spec_audio", version = "0.2.1" }
 
 [profile.release]
 codegen-units = 1

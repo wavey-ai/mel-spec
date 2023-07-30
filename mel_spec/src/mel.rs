@@ -260,15 +260,12 @@ fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
     freqs
 }
 
+#[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
     use super::*;
-    #[allow(unused_imports)]
     use ndarray_npy::NpzReader;
-    #[allow(unused_imports)]
     use std::fs::File;
 
-    #[allow(unused_macros)]
     macro_rules! assert_nearby {
         ($left:expr, $right:expr, $epsilon:expr) => {{
             let (left_val, right_val) = (&$left, &$right);

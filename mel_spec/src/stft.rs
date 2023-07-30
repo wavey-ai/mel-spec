@@ -85,11 +85,9 @@ impl Spectrogram {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    #[warn(unused_imports)]
     use super::*;
-    #[warn(unused_imports)]
-    use num::Complex;
 
     #[test]
     fn test_spectrogram_add() {

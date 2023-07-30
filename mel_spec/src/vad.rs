@@ -312,7 +312,7 @@ pub fn as_image(
 
             let inverted_y = height.checked_sub(y + 3).unwrap_or(0);
             if gradient_positions.contains(&(x, inverted_y)) {
-                let mut tint = Rgb([tint_value, 0, 0]);
+                let tint = Rgb([tint_value, 0, 0]);
                 rgb_pixel = Rgb([
                     rgb_pixel[0].saturating_add(tint[0]),
                     rgb_pixel[1].saturating_add(tint[1]),
@@ -352,13 +352,12 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, ms)
 }
 
-/// Smoke test - see the generated `./test/vad_output.png`.
+/// Smoke test - see the generated `./test/vad.png`.
 /// green lines are the cutsecs predicted to not intersect speech,
-/// red peixels are the detected gradients.
+/// red pixels are the detected gradients.
+#[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
     use super::*;
-    #[allow(unused_imports)]
     use crate::quant::{load_tga_8bit, to_array2};
 
     #[test]
