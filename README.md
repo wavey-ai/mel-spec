@@ -4,6 +4,12 @@ A Rust implementation of mel spectrograms aligned to the results from the
 whisper.cpp, pytorch and librosa reference implementations and suited to
 streaming audio.
 
+## Examples:
+
+* [stream from ffmpeg to whisper.cpp](examples/whisper/)
+* TODO: client-side mel spec and voice-activity detection in WASM (send
+  mel spectrogram images over the wire for inference on lambda)
+
 ### Whisper inference with 8-bit images (or bytestreams)
 
 Passing whisper.cpp mel spectrogram segments directly (via whisper-rs's
@@ -30,6 +36,7 @@ the time indexes that aren't intersected by feature gradients. Due to the
 structure of mel spectrograms, such gradients can be used as a proxy for speech:
 
 ![image](./doc/jfk_vad_boundaries.png)
+![image](./doc/vad.png)
 
 (The Sobel operator works remarkably well for this and has real-time speed.)
 
@@ -81,14 +88,6 @@ let dequantized_mel = load_tga_8bit(file_path, &range).unwrap();
 // load with whisper-rs
 state.set_mel(&dequantized_mel).unwrap();
 ```
-
-## using with whisper-rs and whisper.cpp
-
-Please refer to these PRs, both whisper.cpp and whisper-rs require small
-changes:
-
-<s>https://github.com/tazz4843/whisper-rs/pull/75</s> - merged, use master.
-https://github.com/ggerganov/whisper.cpp/pull/1130
 
 
 ### Discussion
