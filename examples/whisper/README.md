@@ -15,6 +15,11 @@ whisper-rs = { path = "../../whisper-rs", features = ["coreml"]}
 
 ## usage
 
+*IMPORTANT* TARGA mel spectrogram images used for inference will saved in
+`mel_out` for debugging purposes (you can re-run inference on each one,
+frame indexes are printed first in the stdout output. However, this folder
+will grow quickly if left running.
+
 Transcribed speech will be printed to stdout:
 
 ```
