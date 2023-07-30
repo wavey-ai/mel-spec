@@ -196,8 +196,8 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
 
     let mut gradient_positions = HashSet::new(); // Change Vec to HashSet
 
-    for x in min_mel..width - 2 {
-        let num_intersections = (0..height - 2)
+    for x in 0..width - 2 {
+        let num_intersections = (min_mel..height - 2)
             .filter(|&y| gradient_mag[(y, x)] >= threshold)
             .count();
 
@@ -210,7 +210,7 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
             // Store the gradient positions for this column
             for y in 0..height - 2 {
                 if gradient_mag[(y, x)] >= threshold {
-                    gradient_positions.insert((x, y));
+                    gradient_positions.insert((x, y - min_mel));
                 }
             }
         }
