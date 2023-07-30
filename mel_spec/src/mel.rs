@@ -85,17 +85,31 @@ pub fn interleave_frames(
     min_width: usize,
 ) -> Vec<f32> {
     let mut num_frames = frames.len();
+
     assert!(num_frames > 0, "frames is empty");
+    assert!(min_width % 2 == 0, "min_width must be even");
+
     let num_filters = frames[0].shape()[0];
+
+    let mut frames = frames.to_vec();
+
+    // Ensure an even number of frames by padding with a zeroed frame if necessary
+    // *important* mel spectrograms must have even number of columns, otherwise
+    // whisper model will give random results.
+    if num_frames % 2 != 0 {
+        frames.push(Array2::from_shape_fn((num_filters, 1), |(_, _)| 0.0));
+        num_frames += 1;
+    }
 
     // Calculate the combined width along Axis(1) of all frames
     let combined_width: usize = frames.iter().map(|frame| frame.shape()[1]).sum();
 
     // Determine the required padding
-    let padding = combined_width.max(min_width).saturating_sub(combined_width);
+    let padding = min_width.saturating_sub(combined_width);
+    let padded_width = combined_width + padding;
 
     // Create a new Array2 with the required padding
-    let padded_frame = Array2::from_shape_fn((num_filters, padding), |(_, _)| 0.0);
+    let padded_frame = Array2::from_shape_fn((num_filters, padded_width), |(_, _)| 0.0);
 
     // Insert the padded frame to the end of the frames array if padding is needed
     let mut frames_with_padding = frames.to_vec();
@@ -104,8 +118,7 @@ pub fn interleave_frames(
         num_frames += 1;
     }
 
-    let mut interleaved_data =
-        Vec::with_capacity(num_frames * num_filters * (combined_width + padding));
+    let mut interleaved_data = Vec::with_capacity(num_frames * num_filters * padded_width);
 
     if major_column_order {
         for frame_idx in 0..num_frames {

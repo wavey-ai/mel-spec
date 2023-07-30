@@ -108,6 +108,7 @@ impl Pipeline {
             }
 
             if let Some((idx, frames)) = vad.flush() {
+                eprintln!("flushing vad");
                 if let Some(stt_tx) = stt_tx_clone.lock().unwrap().as_ref() {
                     let interleaved_frames = interleave_frames(&frames.clone(), false, 100);
                     if let Err(send_error) = stt_tx.send((idx, interleaved_frames)) {
@@ -174,7 +175,7 @@ mod tests {
         let sampling_rate = 16000.0;
 
         let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-        let vad_settings = DetectionSettings::new(1.0, 5, 10, 0, 100);
+        let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
 
         let config = PipelineConfig::new(mel_settings, vad_settings);
 
@@ -199,6 +200,6 @@ mod tests {
             handle.join().unwrap();
         }
 
-        assert_eq!(res.len(), 10);
+        assert_eq!(res.len(), 6);
     }
 }

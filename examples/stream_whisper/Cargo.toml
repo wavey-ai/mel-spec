@@ -1,5 +1,5 @@
 [package]
-name = "mel_spec_whisper_example"
+name = "stream_whisper"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -17,5 +17,5 @@ whisper-rs = { path = "../../../whisper-rs", features = ["coreml"]}
 structopt = "0.3.26"
 
 [[bin]]
-name = "mel_spec_example"
+name = "stream_whisper"
 path = "src/main.rs"

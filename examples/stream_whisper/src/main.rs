@@ -18,6 +18,16 @@ struct Command {
     model_path: String,
     #[structopt(short, long, default_value = "./mel_out")]
     out_path: String,
+    #[structopt(long, default_value = "1.0")]
+    energy_threshold: f64,
+    #[structopt(long, default_value = "5")]
+    min_intersections: usize,
+    #[structopt(long, default_value = "10")]
+    intersection_threshold: usize,
+    #[structopt(long, default_value = "10")]
+    min_mel: usize,
+    #[structopt(long, default_value = "100")]
+    min_frames: usize,
 }
 
 fn main() {
@@ -25,13 +35,25 @@ fn main() {
     let model_path = args.model_path;
     let mel_path = args.out_path;
 
+    let energy_threshold = args.energy_threshold;
+    let min_intersections = args.min_intersections;
+    let intersection_threshold = args.intersection_threshold;
+    let min_mel = args.min_mel;
+    let min_frames = args.min_frames;
+
     let fft_size = 400;
     let hop_size = 160;
     let n_mels = 80;
     let sampling_rate = 16000.0;
 
     let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-    let vad_settings = DetectionSettings::new(1.0, 4, 10, 0, 100);
+    let vad_settings = DetectionSettings::new(
+        energy_threshold,
+        min_intersections,
+        intersection_threshold,
+        min_mel,
+        min_frames,
+    );
 
     let config = PipelineConfig::new(mel_settings, vad_settings);
 
@@ -59,7 +81,6 @@ fn main() {
             params.set_print_progress(false);
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
-
             state.set_mel(&mel).unwrap();
             let empty = vec![];
             state.full(params, &empty[..]).unwrap();
@@ -79,7 +100,7 @@ fn main() {
     handles.push(handle);
 
     // read audio from pipe
-    const LEN: usize = 1024;
+    const LEN: usize = 128;
     let mut input: Box<dyn Read> = Box::new(io::stdin());
 
     let mut buffer = [0; LEN];
@@ -96,7 +117,7 @@ fn main() {
 
         if bytes_read == LEN {
             let samples = deinterleave_vecs_f32(&buffer, 1);
-            for chunk in samples[0].chunks(1024 / 4) {
+            for chunk in samples[0].chunks(LEN / 4) {
                 let _ = pipeline.send_pcm(chunk);
             }
             bytes_read = 0;

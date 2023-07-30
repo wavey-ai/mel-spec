@@ -56,13 +56,13 @@ impl DetectionSettings {
     }
 
     /// Signals below this threshold will not be counted in edge detection.
-    /// `1 is a good default.
+    /// `1.0` is a good default.
     pub fn energy_threshold(&self) -> f64 {
         self.energy_threshold
     }
 
     /// The min length of a detectable gradient in x-asis frames.
-    /// `4` is a good default.
+    /// `10` is a good default.
     pub fn min_intersections(&self) -> usize {
         self.min_intersections
     }
@@ -120,7 +120,8 @@ impl VoiceActivityDetector {
         if buffer_len > min_frames {
             // check if we are at cutable frame position
             let window = &self.mel_buffer[buffer_len - min_intersections * 2..];
-            let ni = vad_boundaries(&window, &self.settings).non_intersected();
+            let edge_info = vad_boundaries(&window, &self.settings);
+            let ni = edge_info.non_intersected();
             if ni.len() > 0 {
                 if ni[ni.len() - 1] == ni.len() - 1 {
                     let idx = buffer_len - (min_intersections * 2);
@@ -131,7 +132,7 @@ impl VoiceActivityDetector {
                     // frames to carry forward to the new buffer
                     self.mel_buffer = self.mel_buffer[idx..].to_vec();
 
-                    if frames.len() > 0 {
+                    if frames.len() > 0 && edge_info.is_speech() {
                         return Some((cutsec, frames.clone()));
                     }
                 }
@@ -197,8 +198,8 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
     let mut gradient_positions = HashSet::new(); // Change Vec to HashSet
 
     for x in 0..width - 2 {
-        let num_intersections = (min_mel..height - 2)
-            .filter(|&y| gradient_mag[(y, x)] >= threshold)
+        let num_intersections = (0..height - 2)
+            .filter(|&y| gradient_mag[(y, x)] >= threshold && y >= min_mel)
             .count();
 
         if num_intersections < intersection_threshold {
@@ -210,7 +211,7 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
             // Store the gradient positions for this column
             for y in 0..height - 2 {
                 if gradient_mag[(y, x)] >= threshold {
-                    gradient_positions.insert((x, y - min_mel));
+                    gradient_positions.insert((x, y));
                 }
             }
         }
@@ -246,6 +247,24 @@ impl EdgeInfo {
             non_intersected_columns,
             intersected_columns,
             gradient_positions,
+        }
+    }
+
+    /// WIP. Its important to drop high energy frames that lack obvious
+    /// structure in the mel bands as these "empty" frames are highly
+    /// hallucinogenic to Whispser model.
+    pub fn is_speech(&self) -> bool {
+        let ni = self.non_intersected().len() as f32;
+        let is = self.intersected().len() as f32;
+
+        if ni == 0.0 && is == 0.0 {
+            false
+        } else if ni == 0.0 {
+            true
+        } else if is == 0.0 {
+            false
+        } else {
+            ni / is < 5.0
         }
     }
 
@@ -360,13 +379,50 @@ mod tests {
     use super::*;
     use crate::quant::{load_tga_8bit, to_array2};
 
+    //#[test]
+    fn test_speech_detection() {
+        let n_mels = 80;
+        let settings = DetectionSettings {
+            energy_threshold: 1.0,
+            min_intersections: 10,
+            intersection_threshold: 10,
+            min_mel: 0,
+            min_frames: 100,
+        };
+
+        let ids = vec![21168, 23760, 41492, 41902, 63655, 7497, 39744];
+        for id in ids {
+            let file_path = format!("../testdata/blank/frame_{}.tga", id);
+            let dequantized_mel = load_tga_8bit(&file_path).unwrap();
+            let frames = to_array2(&dequantized_mel, n_mels);
+
+            let edge_info = vad_boundaries(&[frames.clone()], &settings);
+            dbg!(edge_info.non_intersected().len() / edge_info.intersected().len());
+
+            //assert!(edge_info.gradient_count < 800);
+        }
+
+        let ids = vec![11648, 2889, 4694, 4901, 27125];
+        for id in ids {
+            let file_path = format!("../testdata/speech/frame_{}.tga", id);
+            let dequantized_mel = load_tga_8bit(&file_path).unwrap();
+            let frames = to_array2(&dequantized_mel, n_mels);
+
+            let edge_info = vad_boundaries(&[frames.clone()], &settings);
+            dbg!(edge_info.gradient_count());
+            dbg!(edge_info.non_intersected().len() / edge_info.intersected().len());
+
+            //assert!(edge_info.gradient_count > 800);
+        }
+    }
+
     #[test]
     fn test_vad_boundaries() {
         let n_mels = 80;
         let settings = DetectionSettings {
             energy_threshold: 1.0,
             min_intersections: 10,
-            intersection_threshold: 5,
+            intersection_threshold: 10,
             min_mel: 0,
             min_frames: 100,
         };
