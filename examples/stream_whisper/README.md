@@ -1,9 +1,15 @@
 # Real-time example with whisper.cpp
 
-Pipe in audio from file or microphone:
+Pipe in audio from file:
 
 ```
-ffmpeg -hide_banner -loglevel error -f avfoundation -i ":1" -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/mel_spec_example
+ffmpeg -hide_banner -loglevel error -i ../testdata/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/stream_whisper --energy-threshold=1.0 --intersection-threshold=10 --min-frames=100 --min-intersections=10 --min-mel=0
+```
+
+or microphone:
+
+```
+ffmpeg -hide_banner -loglevel error -f avfoundation -i ":1" -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1 | ./target/debug/stream_whisper --energy-threshold=1.0 --intersection-threshold=10 --min-frames=100 --min-intersections=10 --min-mel=0
 ```
 
 As a temporary measure please use the [whisper-rs
@@ -20,7 +26,9 @@ whisper-rs = { path = "../../whisper-rs", features = ["coreml"]}
 frame indexes are printed first in the stdout output. However, this folder
 will grow quickly if left running.
 
-Transcribed speech will be printed to stdout:
+Transcribed speech will be printed to stdout.
+
+This is a WIP but results for JFK inaugural address are promising -
 
 ```
 mel_spec/examples/whisper on  pipeline [✘!+?] is 📦 v0.1.0 via 🦀 v1.72.0-nightly on ☁️  (us-east-1) took 7s
