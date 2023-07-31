@@ -1,7 +1,7 @@
 use mel_spec::prelude::*;
 use mel_spec::vad::{duration_ms_for_n_frames, format_milliseconds};
 use mel_spec_audio::deinterleave_vecs_f32;
-use mel_spec_pipeline::{Pipeline, PipelineConfig};
+use mel_spec_pipeline::{Pipeline, PipelineConfig, PipelineOutputBuffer};
 use std::io::{self, Read};
 use std::thread;
 use structopt::StructOpt;
@@ -49,7 +49,7 @@ fn main() {
     let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
     let vad_settings = DetectionSettings::new(min_power, min_y, min_x, min_mel, min_frames);
 
-    let config = PipelineConfig::new(mel_settings, vad_settings);
+    let config = PipelineConfig::new(mel_settings, Some(vad_settings));
 
     let mut pipeline = Pipeline::new(config);
 
@@ -60,32 +60,36 @@ fn main() {
         let ctx = WhisperContext::new(&model_path).expect("failed to load model");
         let mut state = ctx.create_state().expect("failed to create key");
 
+        let mut buf = PipelineOutputBuffer::new();
         while let Ok((idx, mel)) = rx_clone.recv() {
-            let path = format!("{}/frame_{}.tga", mel_path, idx);
-            let _ = save_tga_8bit(&mel, n_mels, &path);
+            if let Some(frames) = buf.add(idx, mel) {
+                let path = format!("{}/frame_{}.tga", mel_path, idx);
+                let _ = save_tga_8bit(&frames, n_mels, &path);
 
-            let ms = duration_ms_for_n_frames(hop_size, sampling_rate, idx);
-            let time = format_milliseconds(ms as u64);
+                let ms = duration_ms_for_n_frames(hop_size, sampling_rate, idx);
+                let time = format_milliseconds(ms as u64);
 
-            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
-            params.set_n_threads(6);
-            params.set_single_segment(true);
-            params.set_language(Some("en"));
-            params.set_print_special(false);
-            params.set_print_progress(false);
-            params.set_print_realtime(false);
-            params.set_print_timestamps(false);
-            state.set_mel(&mel).unwrap();
-            let empty = vec![];
-            state.full(params, &empty[..]).unwrap();
+                let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+                params.set_n_threads(6);
+                params.set_single_segment(true);
+                params.set_language(Some("en"));
+                params.set_print_special(false);
+                params.set_print_progress(false);
+                params.set_print_realtime(false);
+                params.set_print_timestamps(false);
+                state.set_mel(&frames).unwrap();
 
-            let num_segments = state.full_n_segments().unwrap();
-            if num_segments > 0 {
-                if let Ok(text) = state.full_get_segment_text(0) {
-                    let msg = format!("{} [{}] {}", idx, time, text);
-                    println!("{}", msg);
-                } else {
-                    println!("Error retrieving text for segment.");
+                let empty = vec![];
+                state.full(params, &empty[..]).unwrap();
+
+                let num_segments = state.full_n_segments().unwrap();
+                if num_segments > 0 {
+                    if let Ok(text) = state.full_get_segment_text(0) {
+                        let msg = format!("{} [{}] {}", idx, time, text);
+                        println!("{}", msg);
+                    } else {
+                        println!("Error retrieving text for segment.");
+                    }
                 }
             }
         }

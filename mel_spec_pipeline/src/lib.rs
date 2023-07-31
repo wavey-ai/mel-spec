@@ -181,6 +181,34 @@ impl Pipeline {
     }
 }
 
+pub struct PipelineOutputBuffer {
+    buffer: Vec<Array2<f64>>,
+    idx: usize,
+}
+
+impl PipelineOutputBuffer {
+    pub fn new() -> Self {
+        Self {
+            idx: 0,
+            buffer: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, idx: usize, frame: Array2<f64>) -> Option<Vec<f32>> {
+        if idx != self.idx {
+            let window = self.buffer.clone();
+            self.buffer.drain(..);
+            self.idx = idx;
+            let frames = interleave_frames(&window, false, 100);
+            return Some(frames);
+        } else {
+            self.buffer.push(frame);
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

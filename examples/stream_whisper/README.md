@@ -3,13 +3,13 @@
 Pipe in audio from file:
 
 ```
-ffmpeg -hide_banner -loglevel error -i ../../testdata/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/stream_whisper --energy-threshold=1.0 --intersection-threshold=10 --min-frames=100 --min-intersections=10 --min-mel=0
+ffmpeg -hide_banner -loglevel error -i ../../testdata/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/stream_whisper
 ```
 
 or microphone:
 
 ```
-ffmpeg -hide_banner -loglevel error -f avfoundation -i ":1" -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1 | ./target/debug/stream_whisper --energy-threshold=1.0 --intersection-threshold=10 --min-frames=100 --min-intersections=10 --min-mel=0
+ffmpeg -hide_banner -loglevel error -f avfoundation -i ":1" -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1 | ./target/debug/stream_whisper
 ```
 
 As a temporary measure please use the [whisper-rs

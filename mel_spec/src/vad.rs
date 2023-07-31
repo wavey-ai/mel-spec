@@ -12,7 +12,7 @@ pub struct DetectionSettings {
     pub min_frames: usize,
 }
 
-// The purpose of these settings is to detect the "edges" of features in the
+/// The purpose of these settings is to detect the "edges" of features in the
 /// mel spectrogram, favouring gradients that are longer in the time axis and
 /// above a certain power threshold.
 ///
@@ -115,28 +115,27 @@ impl VoiceActivityDetector {
         self.mel_buffer.push(frame.to_owned());
 
         let buffer_len = self.mel_buffer.len();
-        let min_y = self.settings.min_y;
         let min_frames = self.settings.min_frames;
         let min_x = self.settings.min_x;
 
-        if buffer_len > min_frames {
+        if buffer_len >= min_frames {
             // check if we are at cutable frame position
-            let window = &self.mel_buffer[buffer_len - min_y * 2..];
+            let window = &self.mel_buffer; //[buffer_len - min_y * 2..];
             let edge_info = vad_boundaries(&window, &self.settings);
-            let ni = edge_info.non_intersected();
-            if ni.len() > 0 {
-                if ni[ni.len() - 1] == ni.len() - 1 {
-                    let idx = buffer_len - (min_x * 2);
+            for idx in edge_info.non_intersected() {
+                if idx >= min_frames {
                     let cutsec = self.cutsec.clone();
                     self.cutsec = self.cutsec.wrapping_add(idx);
                     // frames to process
-                    let frames = &self.mel_buffer[..idx].to_vec();
+                    let frames = window[..idx].to_vec();
                     // frames to carry forward to the new buffer
-                    self.mel_buffer = self.mel_buffer[idx..].to_vec();
+                    self.mel_buffer = window[idx..].to_vec();
 
                     if frames.len() > 0 && vad_on(&edge_info, min_x * 2) {
                         return Some((cutsec, frames.clone()));
                     }
+
+                    break;
                 }
             }
         }
@@ -196,8 +195,7 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
     let sobel_y =
         Array::from_shape_vec((3, 3), vec![-1., -2., -1., 0., 0., 0., 1., 2., 1.]).unwrap();
 
-    // Convolve with Sobel kernels and calculate the gradient magnitude along the X-axis
-
+    // Convolve with Sobel kernels and calculate the gradient magnitude along the Y-axis
     let gradient_mag = Array::from_shape_fn((height - 2, width - 2), |(y, x)| {
         if y < height && x < width {
             // Add boundary check to avoid going out of bounds
@@ -210,7 +208,7 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
                     gradient_y += view[[j, i]].clone() * sobel_y[[j, i]]; // Use sobel_y for y-direction
                 }
             }
-            // Calculate the magnitude of the gradient (along X-axis)
+            // Calculate the magnitude of the gradient (along Y-axis)
             (gradient_x * gradient_x + gradient_y * gradient_y).sqrt()
         } else {
             0.0
