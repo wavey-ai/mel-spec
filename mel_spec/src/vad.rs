@@ -1,12 +1,13 @@
 use image::{ImageBuffer, Rgb};
+use ndarray::linalg::general_mat_vec_mul;
 use ndarray::{concatenate, s, Array, Array2, Axis};
 use std::collections::HashSet;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct DetectionSettings {
-    pub energy_threshold: f64,
-    pub min_intersections: usize,
-    pub intersection_threshold: usize,
+    pub min_energy: f64,
+    pub min_y: usize,
+    pub min_x: usize,
     pub min_mel: usize,
     pub min_frames: usize,
 }
@@ -22,11 +23,11 @@ pub struct DetectionSettings {
 /// there are no intersections above certain threshold - ie, short gaps in
 /// speech.
 ///
-/// `energy_threshold`: the relative power of the signal, set at around 1 to
+/// `min_energy`: the relative power of the signal, set at around 1 to
 ///  discard noise.
-/// `min_intersections`: this refers to the number of frames the gradient
+/// `min_y`: this refers to the number of frames the gradient
 ///  interescts: i.e., its duration along the x-axis.
-/// `intersection_threshold`: the number of distinct gradients that must
+/// `min_x`: the number of distinct gradients that must
 ///  cross a column on the x-asis for it to be considered generally
 ///  intersected. The reasoning here is that speech will always occupy more
 ///  than one mel frequency bin so a time frame with speech will have several
@@ -40,16 +41,16 @@ pub struct DetectionSettings {
 /// See `doc/jfk_vad_boundaries.png` for a visualisation.
 impl DetectionSettings {
     pub fn new(
-        energy_threshold: f64,
-        min_intersections: usize,
-        intersection_threshold: usize,
+        min_energy: f64,
+        min_y: usize,
+        min_x: usize,
         min_mel: usize,
         min_frames: usize,
     ) -> Self {
         Self {
-            energy_threshold,
-            min_intersections,
-            intersection_threshold,
+            min_energy,
+            min_y,
+            min_x,
             min_mel,
             min_frames,
         }
@@ -57,21 +58,21 @@ impl DetectionSettings {
 
     /// Signals below this threshold will not be counted in edge detection.
     /// `1.0` is a good default.
-    pub fn energy_threshold(&self) -> f64 {
-        self.energy_threshold
+    pub fn min_energy(&self) -> f64 {
+        self.min_energy
     }
 
     /// The min length of a detectable gradient in x-asis frames.
     /// `10` is a good default.
-    pub fn min_intersections(&self) -> usize {
-        self.min_intersections
+    pub fn min_y(&self) -> usize {
+        self.min_y
     }
 
     /// The min number of gradients allowed to intersect an x-axis before it is
     /// discounted from being a speech boundary.
     /// `10` is a good default.
-    pub fn intersection_threshold(&self) -> usize {
-        self.intersection_threshold
+    pub fn min_x(&self) -> usize {
+        self.min_x
     }
 
     /// Ignore mel bands below this setting.
@@ -114,17 +115,18 @@ impl VoiceActivityDetector {
         self.mel_buffer.push(frame.to_owned());
 
         let buffer_len = self.mel_buffer.len();
-        let min_intersections = self.settings.min_intersections;
+        let min_y = self.settings.min_y;
         let min_frames = self.settings.min_frames;
+        let min_x = self.settings.min_x;
 
         if buffer_len > min_frames {
             // check if we are at cutable frame position
-            let window = &self.mel_buffer[buffer_len - min_intersections * 2..];
+            let window = &self.mel_buffer[buffer_len - min_y * 2..];
             let edge_info = vad_boundaries(&window, &self.settings);
             let ni = edge_info.non_intersected();
             if ni.len() > 0 {
                 if ni[ni.len() - 1] == ni.len() - 1 {
-                    let idx = buffer_len - (min_intersections * 2);
+                    let idx = buffer_len - (min_x * 2);
                     let cutsec = self.cutsec.clone();
                     self.cutsec = self.cutsec.wrapping_add(idx);
                     // frames to process
@@ -132,7 +134,7 @@ impl VoiceActivityDetector {
                     // frames to carry forward to the new buffer
                     self.mel_buffer = self.mel_buffer[idx..].to_vec();
 
-                    if frames.len() > 0 && edge_info.is_speech() {
+                    if frames.len() > 0 && vad_on(&edge_info, min_x * 2) {
                         return Some((cutsec, frames.clone()));
                     }
                 }
@@ -148,11 +150,38 @@ impl VoiceActivityDetector {
     }
 }
 
+fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
+    let intersected_columns = &edge_info.intersected_columns;
+
+    if intersected_columns.is_empty() {
+        return false; // No intersected columns, so return false
+    }
+
+    let mut contiguous_count = 1; // Count of contiguous intersected columns
+    let mut prev_index = intersected_columns[0];
+
+    for &index in &intersected_columns[1..] {
+        if index == prev_index + 1 {
+            contiguous_count += 1;
+        } else {
+            contiguous_count = 1;
+        }
+
+        if contiguous_count >= n {
+            return true;
+        }
+
+        prev_index = index;
+    }
+
+    false // If no contiguous segment of n or more intersected columns is found, return false
+}
+
 /// Performs edge detection on the spectrogram using a fast Sobel operator
-pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
+fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
-    let threshold = settings.energy_threshold;
-    let intersection_threshold = settings.intersection_threshold;
+    let min_energy = settings.min_energy;
+    let min_y = settings.min_y;
     let min_mel = settings.min_mel;
     // Concatenate the array views along Axis 0
     let merged_frames = concatenate(Axis(1), &array_views).unwrap();
@@ -168,11 +197,11 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
         Array::from_shape_vec((3, 3), vec![-1., -2., -1., 0., 0., 0., 1., 2., 1.]).unwrap();
 
     // Convolve with Sobel kernels and calculate the gradient magnitude along the X-axis
+
     let gradient_mag = Array::from_shape_fn((height - 2, width - 2), |(y, x)| {
         if y < height && x < width {
             // Add boundary check to avoid going out of bounds
             let view = merged_frames.slice(s![y..y + 3, x..x + 3]);
-
             let mut gradient_x = 0.0;
             let mut gradient_y = 0.0;
             for j in 0..3 {
@@ -181,7 +210,6 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
                     gradient_y += view[[j, i]].clone() * sobel_y[[j, i]]; // Use sobel_y for y-direction
                 }
             }
-
             // Calculate the magnitude of the gradient (along X-axis)
             (gradient_x * gradient_x + gradient_y * gradient_y).sqrt()
         } else {
@@ -189,36 +217,31 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
         }
     });
 
-    // Count the number of high-energy gradients.
-    let gradient_count = gradient_mag.iter().filter(|&val| *val >= threshold).count() as u32;
-
     let mut intersected_columns: Vec<usize> = Vec::new();
     let mut non_intersected_columns: Vec<usize> = Vec::new();
-
-    let mut gradient_positions = HashSet::new(); // Change Vec to HashSet
+    let mut gradient_positions = HashSet::new();
 
     for x in 0..width - 2 {
-        let num_intersections = (0..height - 2)
-            .filter(|&y| gradient_mag[(y, x)] >= threshold && y >= min_mel)
-            .count();
+        let indices: Vec<usize> = (0..height - 2)
+            .filter(|&y| gradient_mag[(y, x)] >= min_energy && y >= min_mel)
+            .collect();
 
-        if num_intersections < intersection_threshold {
+        let num_intersections = indices.len();
+
+        if num_intersections <= min_y {
             non_intersected_columns.push(x);
         }
-        if num_intersections > intersection_threshold {
+        if num_intersections >= min_y {
             intersected_columns.push(x);
 
             // Store the gradient positions for this column
-            for y in 0..height - 2 {
-                if gradient_mag[(y, x)] >= threshold {
-                    gradient_positions.insert((x, y));
-                }
+            for y in indices {
+                gradient_positions.insert((x, y));
             }
         }
     }
 
     EdgeInfo::new(
-        gradient_count,
         non_intersected_columns,
         intersected_columns,
         gradient_positions,
@@ -229,7 +252,6 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
 /// `non_intersected_columns` are good places to cut and send to speech-to-text
 #[derive(Debug)]
 pub struct EdgeInfo {
-    gradient_count: u32,
     non_intersected_columns: Vec<usize>,
     intersected_columns: Vec<usize>,
     gradient_positions: HashSet<(usize, usize)>,
@@ -237,34 +259,14 @@ pub struct EdgeInfo {
 
 impl EdgeInfo {
     pub fn new(
-        gradient_count: u32,
         non_intersected_columns: Vec<usize>,
         intersected_columns: Vec<usize>,
         gradient_positions: HashSet<(usize, usize)>,
     ) -> Self {
         EdgeInfo {
-            gradient_count,
             non_intersected_columns,
             intersected_columns,
             gradient_positions,
-        }
-    }
-
-    /// WIP. Its important to drop high energy frames that lack obvious
-    /// structure in the mel bands as these "empty" frames are highly
-    /// hallucinogenic to Whispser model.
-    pub fn is_speech(&self) -> bool {
-        let ni = self.non_intersected().len() as f32;
-        let is = self.intersected().len() as f32;
-
-        if ni == 0.0 && is == 0.0 {
-            false
-        } else if ni == 0.0 {
-            true
-        } else if is == 0.0 {
-            false
-        } else {
-            ni / is < 5.0
         }
     }
 
@@ -278,12 +280,6 @@ impl EdgeInfo {
     pub fn intersected(&self) -> Vec<usize> {
         let val = self.intersected_columns.clone();
         val
-    }
-
-    /// The number of features in the frame, a proxy for the level of sound activity.
-    pub fn gradient_count(&self) -> usize {
-        let val = self.gradient_count.clone();
-        val as usize
     }
 
     ///  A bitmap, primarily used by [`as_image`].
@@ -379,13 +375,14 @@ mod tests {
     use super::*;
     use crate::quant::{load_tga_8bit, to_array2};
 
-    //#[test]
+    #[test]
     fn test_speech_detection() {
         let n_mels = 80;
+        let min_x = 5;
         let settings = DetectionSettings {
-            energy_threshold: 1.0,
-            min_intersections: 10,
-            intersection_threshold: 10,
+            min_energy: 1.0,
+            min_y: 10,
+            min_x,
             min_mel: 0,
             min_frames: 100,
         };
@@ -397,9 +394,15 @@ mod tests {
             let frames = to_array2(&dequantized_mel, n_mels);
 
             let edge_info = vad_boundaries(&[frames.clone()], &settings);
-            dbg!(edge_info.non_intersected().len() / edge_info.intersected().len());
+            let img = as_image(
+                &[frames.clone()],
+                &edge_info.non_intersected(),
+                &edge_info.gradient_positions(),
+            );
 
-            //assert!(edge_info.gradient_count < 800);
+            assert!(vad_on(&edge_info, min_x) == false);
+            let path = format!("../testdata/vad_off_{}.png", id);
+            img.save(path).unwrap();
         }
 
         let ids = vec![11648, 2889, 4694, 4901, 27125];
@@ -409,30 +412,69 @@ mod tests {
             let frames = to_array2(&dequantized_mel, n_mels);
 
             let edge_info = vad_boundaries(&[frames.clone()], &settings);
-            dbg!(edge_info.gradient_count());
-            dbg!(edge_info.non_intersected().len() / edge_info.intersected().len());
+            let img = as_image(
+                &[frames.clone()],
+                &edge_info.non_intersected(),
+                &edge_info.gradient_positions(),
+            );
+
+            assert!(vad_on(&edge_info, min_x) == true);
+            let path = format!("../testdata/vad_on_{}.png", id);
+            img.save(path).unwrap();
 
             //assert!(edge_info.gradient_count > 800);
         }
+    }
+
+    //#[test]
+    fn test_vad_debug() {
+        let n_mels = 80;
+        let settings = DetectionSettings {
+            min_energy: 1.0,
+            min_y: 3,
+            min_x: 5,
+            min_mel: 0,
+            min_frames: 100,
+        };
+
+        let start = std::time::Instant::now();
+        let file_path = "../testdata/jfk_full_speech_chunk0_golden.tga";
+        let dequantized_mel = load_tga_8bit(file_path).unwrap();
+        let frames = to_array2(&dequantized_mel, n_mels);
+
+        let edge_info = vad_boundaries(&[frames.clone()], &settings);
+
+        let elapsed = start.elapsed().as_millis();
+        dbg!(elapsed);
+        let img = as_image(
+            &[frames.clone()],
+            &edge_info.non_intersected(),
+            &edge_info.gradient_positions(),
+        );
+
+        img.save("../doc/debug.png").unwrap();
     }
 
     #[test]
     fn test_vad_boundaries() {
         let n_mels = 80;
         let settings = DetectionSettings {
-            energy_threshold: 1.0,
-            min_intersections: 10,
-            intersection_threshold: 10,
+            min_energy: 1.0,
+            min_y: 5,
+            min_x: 5,
             min_mel: 0,
             min_frames: 100,
         };
 
+        let start = std::time::Instant::now();
         let file_path = "../testdata/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
         let frames = to_array2(&dequantized_mel, n_mels);
 
         let edge_info = vad_boundaries(&[frames.clone()], &settings);
 
+        let elapsed = start.elapsed().as_millis();
+        dbg!(elapsed);
         let img = as_image(
             &[frames.clone()],
             &edge_info.non_intersected(),
@@ -446,9 +488,9 @@ mod tests {
     fn test_stage() {
         let n_mels = 80;
         let settings = DetectionSettings {
-            energy_threshold: 1.0,
-            min_intersections: 4,
-            intersection_threshold: 4,
+            min_energy: 1.0,
+            min_y: 4,
+            min_x: 4,
             min_mel: 4,
             min_frames: 100,
         };

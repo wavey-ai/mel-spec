@@ -1,4 +1,4 @@
-use ndarray::Array2;
+use ndarray::{s, Array2};
 use std::fs::File;
 use std::io::{self, Read, Write};
 
@@ -8,19 +8,43 @@ pub struct QuantizationRange {
     pub max: f32,
 }
 
-/// Save a spectrogram in TARGA format. `data` must be interleaved in major row order:
+/// Create a TARGA format image data for the spectrogram. `data` must be interleaved in major row order:
 /// use ['mel::interleave_frames`] on the spectrogram first.
 ///
 /// The min/max range used in quantization is stored in the header.
+/// Save a TARGA format image data to a file. Handles splitting the data into multiple files if needed.
 pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> {
     let width = (data.len() / n_mels) as u16;
+    assert!(
+        width < u16::MAX,
+        "width greater than TARGA max, use [`tga_8bit`]"
+    );
     let height = n_mels as u16;
 
+    let data = tga_8bit_data(&data, n_mels);
+    let mut file = File::create(path)?;
+    file.write_all(&data)?;
+
+    Ok(())
+}
+
+pub fn tga_8bit(data: &[f32], n_mels: usize) -> Vec<Vec<u8>> {
+    let mut result = Vec::new();
+    for chunk in chunk_frames_into_strides(data.to_vec(), n_mels, u16::MAX as usize) {
+        result.push(tga_8bit_data(&chunk, n_mels));
+    }
+
+    result
+}
+
+fn tga_8bit_data(data: &[f32], n_mels: usize) -> Vec<u8> {
     // Quantize the floating-point data to 8-bit grayscale
     let (tga_data, range) = quantize(&data.to_vec());
 
-    // Convert the quantized data to 8-bit color index (0-255) and store in tga_data
-    // TGA Header (18 bytes)
+    let width = (data.len() / n_mels) as u16;
+    let height = n_mels as u16;
+
+    // Combine the TGA header and image data
     let mut tga_header = Vec::with_capacity(18);
     tga_header.push(8u8); // ID len
     tga_header.push(0u8); // color map type (unused)
@@ -34,15 +58,11 @@ pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> 
     tga_header.extend_from_slice(&range.min.to_le_bytes());
     tga_header.extend_from_slice(&range.max.to_le_bytes());
 
-    // Combine the TGA header and image data and save to the file
     let mut tga_image = Vec::new();
     tga_image.extend_from_slice(&tga_header);
     tga_image.extend_from_slice(&tga_data);
 
-    let mut file = File::create(path)?;
-    file.write_all(&tga_image)?;
-
-    Ok(())
+    tga_image
 }
 
 /// Load a TARGA file from disk, returning the interleaved frame data.
@@ -69,6 +89,44 @@ pub fn load_tga_8bit(path: &str) -> io::Result<Vec<f32>> {
     let mel = dequantize(&tga_data, &range);
 
     Ok(mel)
+}
+
+/// Utility function to chunk a major row-order interleaved spectrogram
+pub fn chunk_frames_into_strides(
+    frames: Vec<f32>,
+    n_mels: usize,
+    stride_size: usize,
+) -> Vec<Vec<f32>> {
+    let width = frames.len() / n_mels;
+
+    if stride_size == width {
+        return vec![frames];
+    }
+
+    let height = n_mels;
+
+    // Create a 2D ndarray from the image data
+    let ndarray_image = Array2::from_shape_vec((height, width), frames).unwrap();
+
+    // Create a vector to store the chunks
+    let mut chunks = Vec::new();
+
+    // Chunk the frames array into smaller strides
+    for y in (0..height).step_by(stride_size) {
+        for x in (0..width).step_by(stride_size) {
+            let end_y = (y + stride_size).min(height);
+            let end_x = (x + stride_size).min(width);
+
+            // Create a 2D slice representing the chunk and flatten it into a Vec<f32>
+            let chunk = ndarray_image
+                .slice(s![y..end_y, x..end_x])
+                .to_owned()
+                .into_raw_vec();
+            chunks.push(chunk);
+        }
+    }
+
+    chunks
 }
 
 /// Quantize an interleaved spectrogram, returning u8 bytes suitable for

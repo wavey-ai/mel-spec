@@ -19,12 +19,12 @@ struct Command {
     #[structopt(short, long, default_value = "./mel_out")]
     out_path: String,
     #[structopt(long, default_value = "1.0")]
-    energy_threshold: f64,
+    min_power: f64,
+    #[structopt(long, default_value = "3")]
+    min_y: usize,
     #[structopt(long, default_value = "5")]
-    min_intersections: usize,
-    #[structopt(long, default_value = "10")]
-    intersection_threshold: usize,
-    #[structopt(long, default_value = "10")]
+    min_x: usize,
+    #[structopt(long, default_value = "0")]
     min_mel: usize,
     #[structopt(long, default_value = "100")]
     min_frames: usize,
@@ -35,9 +35,9 @@ fn main() {
     let model_path = args.model_path;
     let mel_path = args.out_path;
 
-    let energy_threshold = args.energy_threshold;
-    let min_intersections = args.min_intersections;
-    let intersection_threshold = args.intersection_threshold;
+    let min_power = args.min_power;
+    let min_y = args.min_y;
+    let min_x = args.min_x;
     let min_mel = args.min_mel;
     let min_frames = args.min_frames;
 
@@ -47,13 +47,7 @@ fn main() {
     let sampling_rate = 16000.0;
 
     let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-    let vad_settings = DetectionSettings::new(
-        energy_threshold,
-        min_intersections,
-        intersection_threshold,
-        min_mel,
-        min_frames,
-    );
+    let vad_settings = DetectionSettings::new(min_power, min_y, min_x, min_mel, min_frames);
 
     let config = PipelineConfig::new(mel_settings, vad_settings);
 
@@ -74,7 +68,7 @@ fn main() {
             let time = format_milliseconds(ms as u64);
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
-            params.set_n_threads(1);
+            params.set_n_threads(6);
             params.set_single_segment(true);
             params.set_language(Some("en"));
             params.set_print_special(false);
