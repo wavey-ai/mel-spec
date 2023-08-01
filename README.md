@@ -169,7 +169,7 @@ transients to find boundaries, but it's not easy to tell if enegry changes are
 voice or something else. Mel spectrograms already provide a distinctive "voice"
 signature.
 
-The graphic below shows part of JFK's speach and uses Sobel edge detection to find
+The graphic below shows part of JFK's speech and uses Sobel edge detection to find
 possible word/speech boundaries. As you can see, it works pretty well:
 
 ![image](doc/jfk_vad_example.png)
