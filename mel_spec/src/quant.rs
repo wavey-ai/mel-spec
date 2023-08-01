@@ -12,7 +12,6 @@ pub struct QuantizationRange {
 /// use ['mel::interleave_frames`] on the spectrogram first.
 ///
 /// The min/max range used in quantization is stored in the header.
-/// Save a TARGA format image data to a file. Handles splitting the data into multiple files if needed.
 pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> {
     let width = (data.len() / n_mels) as u16;
     assert!(
