@@ -1,3 +1,6 @@
+# Version 0.2.2
+* Voice Activity and word boundary detection enhancements and tests
+
 # Version 0.2.1
 * make api public - woops
 * add ffmpeg -> mel_spec -> whisper cli example
