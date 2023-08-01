@@ -1,5 +1,4 @@
 use image::{ImageBuffer, Rgb};
-use ndarray::linalg::general_mat_vec_mul;
 use ndarray::{concatenate, s, Array, Array2, Axis};
 use std::collections::HashSet;
 

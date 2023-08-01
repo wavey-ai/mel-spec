@@ -19,7 +19,6 @@ pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> 
         width < u16::MAX,
         "width greater than TARGA max, use [`tga_8bit`]"
     );
-    let height = n_mels as u16;
 
     let data = tga_8bit_data(&data, n_mels);
     let mut file = File::create(path)?;
