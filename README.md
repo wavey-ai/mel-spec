@@ -215,6 +215,16 @@ a problem but this always happens when the model is passed mel spectrograms that
 don't contain actual speech. TODO: I think there are also probability metrics for
 tokens returned by the model that might help.
 
+The current state of play, the full JFK speech with the above voice activity and
+word boundary settings, processing on a stream and sending to Whisper approx every
+and 1-second, can be found here:
+
+[jfk_transcript_golden.txt](https://github.com/wavey-ai/mel-spec/blob/main/doc/jfk_transcript_golden.txt)
+
+It will be possible to tidy up hallucinations by checking the spectrograms and
+refining the boundary detection (each segment/line has a corresponding spectrogram
+saved - see `examples`).
+
 ### Example apps:
 
 * [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
