@@ -4,93 +4,231 @@ A Rust implementation of mel spectrograms aligned to the results from the
 whisper.cpp, pytorch and librosa reference implementations and suited to
 streaming audio.
 
-## Examples:
+## Usage
 
-* [stream from ffmpeg to whisper.cpp](examples/whisper/)
-* TODO: client-side mel spec and voice-activity detection in WASM (send
-  mel spectrogram images over the wire for inference on lambda)
-
-### Whisper inference with 8-bit images (or bytestreams)
-
-Passing whisper.cpp mel spectrogram segments directly (via whisper-rs's
-set_mel binding):
-
-![image](./doc/fellow_americans.png)
-`[_BEG_] fellow Americans.[_TT_43]`
-
-![image](./doc/ask.png)
-`[_BEG_] ASK![_TT_51]`
-
-![image](./doc/not.png)
-`[_BEG_] NOT![_TT_25]`
-
-Mel spectrograms can be used as a primary API for whisper: encode once - in
-real-time - retrieve for inference.
-
-This also opens up interesting possibilities for real-time inference - rather
-than looking for attack transients in PCM for voice activity detection - urgh -
-we can use edge detection! 
-
-The `vad_boundaries` method takes a Mel spectrogram of any size and demarcates
-the time indexes that aren't intersected by feature gradients. Due to the
-structure of mel spectrograms, such gradients can be used as a proxy for speech:
-
-![image](./doc/jfk_vad_boundaries.png)
-![image](./doc/vad.png)
-
-(The Sobel operator works remarkably well for this and has real-time speed.)
-
-In a real-time scenario we might choose to send data to whisper, say, whenever
-we encounter a non-intersection and have accumulated at least a second of
-spectrogram data.
+To require the libary's main features:
 
 ```
-let dequantized_mel = load_tga_8bit(file_path).unwrap();
-let edge_info = edge_detect(&dequantized_mel, n_mels, 1.0, 5);
+use mel_spec::prelude::*
 ```
 
-(See [src/vad.rs](./src/vad.rs))
+### Mel filterbank that has parity with librosa:
 
-With quantised mel spectrograms there is zero information loss with respect to
-the model's view on the original audio data - but 10x data saving, before
-compression.
+Mel filterbanks, within 1.0e-7 of librosa and identical to whisper
+GGML model-embedded filters.
+ 
+```
+        let file_path = "./testdata/mel_filters.npz";
+        let f = File::open(file_path).unwrap();
+        let mut npz = NpzReader::new(f).unwrap();
+        let filters: Array2<f32> = npz.by_index(0).unwrap();
+        let want: Array2<f64> = filters.mapv(|x| f64::from(x));
+        let sampling_rate = 16000.0;
+        let fft_size = 400;
+        let n_mels = 80;
+        let hkt = false;
+        let norm = true;
+        let got = mel(sampling_rate, fft_size, n_mels, hkt, norm);
+        assert_eq!(got.shape(), vec![80, 201]);
+        for i in 0..80 {
+            assert_nearby!(got.row(i), want.row(i), 1.0e-7);
+        }
+```
+
+### Spectrogam using Short Time Fourier Transform
+
+STFT with overlap-and-save that has parity with pytorch and
+whisper.cpp.
+
+The implementation is suitable for processing streaming audio and
+will accumulate the correct amount of data before returning fft
+results.
+
+```
+        let fft_size = 8;
+        let hop_size = 4;
+        let mut spectrogram = Spectrogram::new(fft_size, hop_size);
+
+        // Add PCM audio samples
+        let frames: Vec<f32> = vec![1.0, 2.0, 3.0];
+        if let Some(fft_frame) = spectrogram.add(&frames) {
+            // use fft result
+        }  
+```
+
+### STFT Spectrogam to Mel Spectrogram
+
+MelSpectrogram applies a pre-computed filerbank to an FFT result.
+Results are identical to whisper.cpp and whisper.py
+
+```
+        let fft_size = 400;
+        let sampling_rate = 16000.0;
+        let n_mels = 80;
+        let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
+        // Example input data for the FFT
+        let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
+        // Add the FFT data to the MelSpectrogram
+        let mel_spec = stage.add(fft_input);
+```
+
+### Creating Mel Spectrograms from Audio.
+
+The library includes basic audio helpder and a pipeline for processing
+PCM audio and creating Mel spectrograms that can be sent to whisper.cpp.
+
+It also has voice activity detection that uses edge detection (which
+might be a novel approach) to identify word/speech boundaries in real-
+time.
+
+```
+        // load the whisper jfk sample
+        let file_path = "../testdata/jfk_f32le.wav";
+        let file = File::open(&file_path).unwrap();
+        let data = parse_wav(file).unwrap();
+        let samples = deinterleave_vecs_f32(&data.data, 1);
+
+        let fft_size = 400;
+        let hop_size = 160;
+        let n_mels = 80;
+        let sampling_rate = 16000.0;
+
+        let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
+        let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
+
+        let config = PipelineConfig::new(mel_settings, Some(vad_settings));
+
+        let mut pl = Pipeline::new(config);
+
+        let handles = pl.start();
+
+        // chunk size can be anything, 88 is random
+        for chunk in samples[0].chunks(88) {
+            let _ = pl.send_pcm(chunk);
+        }
+
+        pl.close_ingress();
+
+        while let Ok((_, mel_spectrogram)) = pl.rx().recv() {
+          // do something with spectrogram
+        }
+```        
+
+### Saving Mel Spectrograms to file
+
+Mel spectrograms can be saved in Tga format - an uncompressed image format
+supported by OSX and Windows.
+
+As these images directly encode quantized mel spectrogram data they represent
+a "photographic negative" of audio data that whisper.cpp can develop and print
+without the need for direct audio input.
+
+`tga` files are used in lieu of actual audio for most of the library tests. These
+files are lossless in Speech-to-Text terms, they encode all the information that
+is available in the model's view of raw audio and will produce identical results.
+
+Note that spectrograms must have an even number of columns in the time domain,
+otherwise Whisper will hallucinate. the library takes care of this if using the
+core methods.
+
+```
+     let file_path = "../testdata/jfk_full_speech_chunk0_golden.tga";
+     let dequantized_mel = load_tga_8bit(file_path).unwrap();
+     // dequantized_mel can be sent straight to whisper.cpp
+```
+
+```
+❯ ffmpeg -hide_banner -loglevel error -i ~/Downloads/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/tga_whisper -t ../../doc/cutsec_46997.tga
+...
+whisper_init_state: Core ML model loaded
+Got 1
+ the quest for peace.
+```
+
+![image](doc/cutsec_46997.png)
+_the quest for peace._
+
+
+### Voice Activity Detection
+
+I had the idea of using the Sobel operator for this as speech in Mel spectrograms
+is characterised by clear gradients.
+
+The general idea is to outline structure in the spectrogram and then find vertical
+gaps that are suitable for cutting - to allow passing new spectrograms to the model
+in near real-time.
+
+It's particualrly good at separating speech activity - this is important, because
+anything resembling white noise is hallucinogenic to Whisper. The Voice Activity
+Detector module therefore drops frames that look to be gaps in speech.
+
+This is still not perfect and definitely a downside of stream processing, at least
+with Whisper. However, pre-processing audio as spectrograms should be more robust
+than pre-processing raw audio - with raw audio it's necessary to look for attack
+transients to find boundaries, but it's not easy to tell if enegry changes are
+voice or something else. Mel spectrograms already provide a distinctive "voice"
+signature.
+
+The graphic below shows part of JFK's speach and uses Sobel edge detection to find
+possible word/speech boundaries. As you can see, it works pretty well:
+
+![image](doc/jfk_vad_example.png)
+
+For reference, the settings used for this example are: 
+
+```
+        let settings = DetectionSettings {
+            min_energy: 1.0,
+            min_y: 3,
+            min_x: 5,
+            min_mel: 0,
+            min_frames: 100,
+        };
+```
+
+Voice boundares for the entire inaugural address can be found in:
+`testdata/jfk_full_speech_chunk0_golden.tga`.
+
+It does a good job of detecting when a window contains no speech, vs when it
+contains very short expressions - green means no speech detected - green as
+it means it's safe to cut without cutting a word in half.
+
+A segment in the JFK speech that's noisy and somewhat strucutured - but not
+speech (I picked these by finding the most wild hallucinations in the
+transcript):
+
+energy but no speech: ![image](doc/frame_23760.png)
+vad result: ![image](testdata/vad_off_23760.png)
+
+Word detection will discard this entire frame as the intersections are only a
+pixel or two wide - it needs at least 5 pixels of contiguous intersection in
+the time domain (and 3 in the frequency domain - see `DetectionSettings` above)
+to count the window as including speech.
+
+A fleeting word: ![image](doc/frame_27125.png)
+vad result: ![image](testdata/vad_on_27125.png)
+
+This passes as speech.
+
+More work needs to be done here, but it is a good start. Hallucinations remain
+a problem but this always happens when the model is passed mel spectrograms that
+don't contain actual speech. TODO: I think there are also probability metrics for
+tokens returned by the model that might help.
+
+### Example apps:
+
+* [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
+* [convert audio to mel spectrograms and save to image](examples/mel_tga)
+* [trasnscribe images with whisper.cpp](examples/tga_whisper)
+
+
+
+### Discussion
 
 * Mel spectrograms encode at 6.4Kb /sec (80 * 2 bytes * 40 frames)
 * Float PCM required by whispser audio APIs is 64Kb /sec at 16Khz
     - expensive to reprocess
     - resource intensive to keep PCM in-band for overlapping
-
-### mel filter banks
-
-Mel filter banks are within 1.0e-7 of `librosa.filters.mel` and identical to
-the GGML model-embedded filters used by whisper.cpp.
-
-### stft - FFT on a stream with overlapping windows
-
-A stft implementation that allows creating spectrograms from an audio steam -
-near identical to those produced by whisper.cpp internally.
-
-An example of whisper inference from mel spectrograms via `whisper-rs` can be
-found in the tests.
-
-### quantisation
-
-Mel spectrograms can be saved in Tga format - an uncompressed image format
-supported by OSX and Windows.
-
-Tga images can be created from any audio input, cropped in Photoshop and reused:
-
-```
-let range = save_tga_8bit(&mel_spectrogram, n_mels, file_path).unwrap();
-// do something with the image - maybe splice it to isolate a particular feature,
-// and resave it
-let dequantized_mel = load_tga_8bit(file_path, &range).unwrap();
-// load with whisper-rs
-state.set_mel(&dequantized_mel).unwrap();
-```
-
-
-### Discussion
 
 whisper.cpp produces mel spectrograms with 1.0e-6 precision. However,
 these spectrograms are invariant to 8-bit quantisation: we can save them
