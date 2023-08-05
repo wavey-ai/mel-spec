@@ -96,7 +96,7 @@ pub fn interleave_frames(
     // Ensure an even number of frames by padding with a zeroed frame if necessary
     // *important* mel spectrograms must have even number of columns, otherwise
     // whisper model will give random results.
-    if num_frames % 2 != 0 {
+    if min_width > 0 && num_frames % 2 != 0 {
         frames.push(Array2::from_shape_fn((num_filters, 1), |(_, _)| 0.0));
         num_frames += 1;
     }

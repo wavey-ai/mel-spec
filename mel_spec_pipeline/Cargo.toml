@@ -10,10 +10,23 @@ readme = "README.md"
 [dependencies]
 crossbeam-channel = "0.5.8"
 image = "0.24.6"
+js-sys = "0.3.64"
 mel_spec = { workspace = true }
 mel_spec_audio = { workspace = true }
 ndarray = "0.15.6"
+rubato = "0.14.1"
+wasm-bindgen = "0.2.87"
 
+[dependencies.web-sys]
+version = "0.3.4"
+features = [
+    'console',
+    'MessageEvent',
+    'Worker',
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [target.aarch64-apple-darwin]
 rustflags = "-lc++ -l framework=Accelerate"
