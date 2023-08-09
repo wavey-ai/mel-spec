@@ -30,7 +30,9 @@ async function init_wasm_in_worker() {
       if (samples) {
         const res = mod.add(samples);
         if (res.ok) {
-          melBuf.push(res.frame);
+          let f = res.frame;
+          f[0] = (res.va ? f[0] | 1 : f[0] & ~ 1);
+          melBuf.push(f);
         }
       }
     }

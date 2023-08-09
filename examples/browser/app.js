@@ -8,7 +8,7 @@ const pixelsPerColumn = 2;
 const fftSize = 1024;
 const hopSize = 160;
 const samplingRate = 16000;
-const nMels = 80;
+const nMels = 20;
 
 async function startAudioProcessing(audioContext) {
   await wasm_bindgen();
@@ -39,20 +39,20 @@ async function startAudioProcessing(audioContext) {
   const pcmBuf = ringbuffer(pcmSab, 128, 1024, Float32Array);
 
   setTimeout(() => {
-  worker.postMessage({
-    options: {
-      sourceSamplingRate,
-      fftSize,
-      hopSize,
-      samplingRate,
-      nMels,
-    },
-    melSab,
-    pcmSab,
-  });
-  audioNode.port.postMessage({
-    pcmSab,
-  });
+    worker.postMessage({
+      options: {
+        sourceSamplingRate,
+        fftSize,
+        hopSize,
+        samplingRate,
+        nMels,
+      },
+      melSab,
+      pcmSab,
+    });
+    audioNode.port.postMessage({
+      pcmSab,
+    });
   }, 500);
 
   const canvas = document.getElementById("canvas"); // Replace 'canvas' with the ID of your canvas element
@@ -72,7 +72,7 @@ async function startAudioProcessing(audioContext) {
 
   const boundary = new ImageData(arr, 1);
 
-  let addFrame = (frame) => {
+  let addFrame = (frame, vad) => {
     if (frame && frame.length > 0) {
       const numColumns = Math.ceil(frame.length / nMels);
 
@@ -109,13 +109,44 @@ async function startAudioProcessing(audioContext) {
         const imageData = new ImageData(arr, 1);
         ctx.putImageData(imageData, canvas.width - numColumns + col, 0);
       }
+
+      // Draw circle based on vad flag
+      const centerX = Math.floor(canvas.width / 2);
+      const centerY = 50;
+      const circleRadius = 20; // Adjust the radius as needed
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
+
+      if (vad) {
+        // Draw a green circle when vad is true
+        ctx.fillStyle = "green";
+      } else {
+        // Draw a red circle when vad is false
+        ctx.fillStyle = "red";
+      }
+
+      ctx.fill();
+      ctx.closePath();
     }
   };
 
+  let i = 0;
+  let vad = false;
   const updateIntervalMs = 5;
   function updateUI() {
     const mel = melBuf.pop();
-    addFrame(mel);
+    if (vad) {
+      i++
+    }
+    if (vad && i==100) {
+        vad = false;
+        i = 0;
+    }
+    if (!vad) {
+      vad = mel && (mel[0] & 1) === 1;
+    }
+    addFrame(mel, vad);
   }
   const updateIntervalId = setInterval(updateUI, updateIntervalMs);
 }

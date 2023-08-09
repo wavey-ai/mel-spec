@@ -40,10 +40,10 @@ impl SpeechToMel {
         let stft = Spectrogram::new(fft_size, hop_size);
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 3,
-            min_x: 3,
+            min_y: 6,
+            min_x: 6,
             min_mel: 0,
-            min_frames: 50,
+            min_frames: 30,
         };
 
         let vad = VoiceActivityDetector::new(&settings);
