@@ -4,7 +4,7 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "NODE_ENV=test npx tap test/ringbuffer.js",
+    "test": "tap test/ringbuffer.js",
     "build": "make build",
     "start": "npm run build && node server.js"
   },

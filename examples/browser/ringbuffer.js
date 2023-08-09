@@ -83,7 +83,7 @@ function ringbuffer(sab, frame_size, max_frames, dataType) {
   };
 }
 
-if (process.env.NODE_ENV == "test") {
+if (typeof module !== 'undefined') {
   module.exports = {
     ringbuffer,
     sharedbuffer,
