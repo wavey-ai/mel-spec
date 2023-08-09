@@ -17,3 +17,4 @@ rustfft = { path = "../../RustFFT", features = ["wasm_simd"] }
 
 [target.aarch64-apple-darwin]
 rustflags = "-lc++ -l framework=Accelerate"
+

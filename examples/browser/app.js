@@ -24,27 +24,36 @@ async function startAudioProcessing(audioContext) {
   audioInput.connect(volume);
 
   try {
-    await audioContext.audioWorklet.addModule("audioSender.js");
+    await audioContext.audioWorklet.addModule("./dist/worklet.js");
   } catch (error) {
-    console.error("Error loading audioSender.js:", error);
+    console.error("Error loading audio worklet:", error);
   }
+
   const audioNode = new AudioWorkletNode(audioContext, "AudioSender");
   volume.connect(audioNode);
   audioNode.connect(audioContext.destination);
 
-  let bufferSize = nMels * 1024 + 2 + 1;
-  const sab = new SharedArrayBuffer(bufferSize); // One extra byte for the length information
+  const melSab = sharedbuffer(nMels, 1024, Uint8ClampedArray);
+  const melBuf = ringbuffer(melSab, nMels, 1024, Uint8ClampedArray);
+  const pcmSab = sharedbuffer(128, 1024, Float32Array);
+  const pcmBuf = ringbuffer(pcmSab, 128, 1024, Float32Array);
+
+  setTimeout(() => {
   worker.postMessage({
-    type: "init",
     options: {
       sourceSamplingRate,
       fftSize,
       hopSize,
       samplingRate,
       nMels,
-      melBuffer: sab,
     },
+    melSab,
+    pcmSab,
   });
+  audioNode.port.postMessage({
+    pcmSab,
+  });
+  }, 500);
 
   const canvas = document.getElementById("canvas"); // Replace 'canvas' with the ID of your canvas element
   const ctx = canvas.getContext("2d");
@@ -90,7 +99,7 @@ async function startAudioProcessing(audioContext) {
 
         const arr = new Uint8ClampedArray(nMels * 4);
         for (let i = 0; i < columnData.length; i++) {
-          let val = columnData[columnData.length-i];
+          let val = columnData[columnData.length - i];
           arr[i * 4 + 0] = val; // R value
           arr[i * 4 + 1] = 50; // G value
           arr[i * 4 + 2] = val; // B value
@@ -103,34 +112,12 @@ async function startAudioProcessing(audioContext) {
     }
   };
 
-  let i = 0;
-  audioNode.port.onmessage = (event) => {
-    let samples = event.data.samples;
-    worker.postMessage({ samples }, [samples.buffer]);
-
-    if (i % 4 == 0) {
-      const lockVariable = new Int32Array(sab, 0, 4);
-
-      // Acquire the lock
-      if (Atomics.compareExchange(lockVariable, 0, 1) === 0) {
-        let melMemory = new Uint8Array(sab);
-        let cursor = new DataView(melMemory.buffer, 4).getInt16(0, true);
-        const offset = 6 + (cursor * nMels);
-        if (cursor > 0) {
-          const frames = melMemory.slice(6, offset);
-          // Zero out the data portion of the SharedArrayBuffer (excluding the lock variable)
-          const dataView = new Uint8Array(sab, 4); // Start at offset 4 to skip the lock variable
-          dataView.fill(0);
-          Atomics.store(lockVariable, 0, 0);
-          Atomics.notify(lockVariable, 0, 1);
-
-          addFrame(frames);
-        }
-      }
-    }
-    i += 1;
-
-  };
+  const updateIntervalMs = 5;
+  function updateUI() {
+    const mel = melBuf.pop();
+    addFrame(mel);
+  }
+  const updateIntervalId = setInterval(updateUI, updateIntervalMs);
 }
 
 startButton.addEventListener("click", () => {

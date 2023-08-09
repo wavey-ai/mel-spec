@@ -6,7 +6,7 @@ use mel_spec::vad::{duration_ms_for_n_frames, DetectionSettings, VoiceActivityDe
 use ndarray::Array2;
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 use wasm_bindgen::prelude::*;
-use web_sys::{MessageEvent, Worker};
+use web_sys::Worker;
 
 #[wasm_bindgen]
 pub struct SpeechToMel {
@@ -60,10 +60,18 @@ impl SpeechToMel {
     }
 
     #[wasm_bindgen]
+    pub fn get(&mut self) -> JsValue {
+        let empty = vec![0.0; 0];
+        self.add(empty)
+    }
+
+    #[wasm_bindgen]
     pub fn add(&mut self, data: Vec<f32>) -> JsValue {
         let result = Object::new();
+        Reflect::set(&result, &JsValue::from_str("ok"), &JsValue::from(false)).unwrap();
+
         self.accumulated_samples.extend_from_slice(&data);
-        while self.accumulated_samples.len() >= self.hop_size {
+        if self.accumulated_samples.len() >= self.hop_size {
             let (chunk, rest) = self.accumulated_samples.split_at(self.hop_size);
             let samples: Vec<f32>;
 
@@ -80,13 +88,14 @@ impl SpeechToMel {
                 &JsValue::from(samples.len()),
             )
             .unwrap();
-
             if let Some(fft) = self.fft.add(&samples.to_vec()) {
                 let frame = norm_mel(&log_mel_spectrogram(&fft, &self.mel));
                 let (quant_frame, _) = quantize(&interleave_frames(&[frame.clone()], false, 0));
                 let frame_array = Uint8Array::from(&quant_frame[..]);
                 let frame_clamped_array = Uint8ClampedArray::new(&frame_array.buffer());
                 Reflect::set(&result, &JsValue::from_str("frame"), &frame_clamped_array).unwrap();
+                Reflect::set(&result, &JsValue::from_str("ok"), &JsValue::from(true)).unwrap();
+
                 if let Some((idx, va, frames)) = self.vad.add(&frame) {
                     let (mel, _) = quantize(&interleave_frames(&frames, false, 100));
                     let mel_array = Uint8Array::from(&mel[..]);
@@ -96,6 +105,7 @@ impl SpeechToMel {
                     Reflect::set(&result, &JsValue::from_str("mel"), &mel_clamped_array).unwrap();
                     Reflect::set(&result, &JsValue::from_str("ms"), &JsValue::from(ms)).unwrap();
                     Reflect::set(&result, &JsValue::from_str("va"), &JsValue::from(va)).unwrap();
+                    Reflect::set(&result, &JsValue::from_str("ok"), &JsValue::from(true)).unwrap();
                 }
             }
             self.accumulated_samples = rest.to_vec();

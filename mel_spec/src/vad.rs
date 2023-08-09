@@ -117,7 +117,7 @@ impl VoiceActivityDetector {
         let min_frames = self.settings.min_frames;
         let min_x = self.settings.min_x;
 
-        if buffer_len >= min_frames {
+        if buffer_len >= min_frames && (buffer_len - min_frames) % 20 == 0 {
             // check if we are at cutable frame position
             let window = &self.mel_buffer; //[buffer_len - min_y * 2..];
             let edge_info = vad_boundaries(&window, &self.settings);
@@ -227,14 +227,13 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
 
         if num_intersections <= min_y {
             non_intersected_columns.push(x);
-        }
-        if num_intersections >= min_y {
+        } else if num_intersections >= min_y {
             intersected_columns.push(x);
 
             // Store the gradient positions for this column
-            for y in indices {
-                gradient_positions.insert((x, y));
-            }
+            //            for y in indices {
+            //                gradient_positions.insert((x, y));
+            //:            }
         }
     }
 
@@ -452,7 +451,7 @@ mod tests {
         img.save("../doc/debug.png").unwrap();
     }
 
-    #[test]
+    //    #[test]
     fn test_vad_boundaries() {
         let n_mels = 80;
         let settings = DetectionSettings {
@@ -481,14 +480,14 @@ mod tests {
         img.save("../doc/vad.png").unwrap();
     }
 
-    //    #[test]
+    #[test]
     fn test_stage() {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
             min_y: 4,
             min_x: 4,
-            min_mel: 4,
+            min_mel: 0,
             min_frames: 100,
         };
         let mut stage = VoiceActivityDetector::new(&settings);
@@ -502,11 +501,15 @@ mod tests {
             .map(|chunk| chunk.to_owned())
             .collect();
 
+        let start = std::time::Instant::now();
+
         let mut res = Vec::new();
         for mel in &chunks {
             if let Some((idx, _, _)) = stage.add(&mel) {
                 res.push(idx);
             }
         }
+        let elapsed = start.elapsed().as_millis();
+        dbg!(elapsed);
     }
 }
