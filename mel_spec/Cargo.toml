@@ -8,6 +8,7 @@ repository = "https://github.com/wavey-ai/mel-spec"
 readme = "README.md"
 
 [dependencies]
+fast_image_resize = "2.7.3"
 image = "0.24.6"
 js-sys = "0.3.64"
 ndarray = "0.15.6"

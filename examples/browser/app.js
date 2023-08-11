@@ -4,11 +4,10 @@ const canvas = document.getElementById("canvas");
 const canvasCtx = canvas.getContext("2d");
 
 const canvasHeight = canvas.height;
-const pixelsPerColumn = 2;
 const fftSize = 1024;
 const hopSize = 160;
 const samplingRate = 16000;
-const nMels = 20;
+const nMels = 80;
 
 async function startAudioProcessing(audioContext) {
   await wasm_bindgen();
@@ -58,7 +57,7 @@ async function startAudioProcessing(audioContext) {
   const canvas = document.getElementById("canvas"); // Replace 'canvas' with the ID of your canvas element
   const ctx = canvas.getContext("2d");
   const columnWidth = 1;
-  const canvasHeight = 80;
+  const canvasHeight = 130;
   ctx.fillStyle = "rgb(0, 0, 0)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = false;
@@ -112,18 +111,18 @@ async function startAudioProcessing(audioContext) {
 
       // Draw circle based on vad flag
       const centerX = Math.floor(canvas.width / 2);
-      const centerY = 50;
-      const circleRadius = 20; // Adjust the radius as needed
+      const centerY = 100;
+      const circleRadius = 10; // Adjust the radius as needed
 
       ctx.beginPath();
       ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
 
       if (vad) {
         // Draw a green circle when vad is true
-        ctx.fillStyle = "green";
+        ctx.fillStyle = "red";
       } else {
         // Draw a red circle when vad is false
-        ctx.fillStyle = "red";
+        ctx.fillStyle = "blue";
       }
 
       ctx.fill();

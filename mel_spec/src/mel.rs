@@ -13,7 +13,7 @@ impl MelSpectrogram {
         Self { filters }
     }
 
-    pub fn add(&mut self, fft: Array1<Complex<f64>>) -> Array2<f64> {
+    pub fn add(&mut self, fft: &Array1<Complex<f64>>) -> Array2<f64> {
         let mel = log_mel_spectrogram(&fft, &self.filters);
         let norm = norm_mel(&mel);
         norm

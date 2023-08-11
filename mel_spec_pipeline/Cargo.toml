@@ -14,6 +14,7 @@ js-sys = "0.3.64"
 mel_spec = { workspace = true }
 mel_spec_audio = { workspace = true }
 ndarray = "0.15.6"
+num = "0.4.1"
 rubato = "0.14.1"
 wasm-bindgen = "0.2.87"
 

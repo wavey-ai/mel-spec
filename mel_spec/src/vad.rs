@@ -1,3 +1,4 @@
+use crate::utils::downscale_frames;
 use image::{ImageBuffer, Rgb};
 use ndarray::{concatenate, s, Array, Array2, Axis};
 use std::collections::HashSet;
@@ -89,18 +90,15 @@ impl DetectionSettings {
 
 pub struct VoiceActivityDetector {
     mel_buffer: Vec<Array2<f64>>,
-    cutsec: usize,
     settings: DetectionSettings,
 }
 
 impl VoiceActivityDetector {
     pub fn new(settings: &DetectionSettings) -> Self {
         let mel_buffer: Vec<Array2<f64>> = Vec::new();
-        let cutsec: usize = 0;
 
         Self {
             mel_buffer,
-            cutsec,
             settings: settings.to_owned(),
         }
     }
@@ -110,7 +108,7 @@ impl VoiceActivityDetector {
     /// frames have accumulated. Otherwise, returns `None`.
     /// Use [`duration_ms_for_n_frames`] to get the start time in milliseconds
     /// from the frame index.
-    pub fn add(&mut self, frame: &Array2<f64>) -> Option<(usize, bool, Vec<Array2<f64>>)> {
+    pub fn add(&mut self, frame: &Array2<f64>) -> Option<(bool, Vec<usize>)> {
         self.mel_buffer.push(frame.to_owned());
 
         let buffer_len = self.mel_buffer.len();
@@ -123,15 +121,13 @@ impl VoiceActivityDetector {
             let edge_info = vad_boundaries(&window, &self.settings);
             for idx in edge_info.non_intersected() {
                 if idx >= min_frames {
-                    let cutsec = self.cutsec.clone();
-                    self.cutsec = self.cutsec.wrapping_add(idx);
                     // frames to process
                     let frames = window[..idx].to_vec();
                     // frames to carry forward to the new buffer
                     self.mel_buffer = window[idx..].to_vec();
 
                     if frames.len() > 0 {
-                        return Some((cutsec, vad_on(&edge_info, min_x * 2), frames.clone()));
+                        return Some((vad_on(&edge_info, min_x * 2), edge_info.non_intersected()));
                     }
 
                     break;
@@ -139,12 +135,6 @@ impl VoiceActivityDetector {
             }
         }
         None
-    }
-
-    /// Return the accumulated buffer in full, without doing edge detection.
-    /// Useful to call at the end of a pipeline.
-    pub fn flush(&self) -> Option<(usize, Vec<Array2<f64>>)> {
-        Some((self.cutsec.clone(), self.mel_buffer.to_owned()))
     }
 }
 
@@ -177,14 +167,12 @@ fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
 
 /// Performs edge detection on the spectrogram using a fast Sobel operator
 fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
-    //let reduced_frames = reduce_resolution(frames);
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
     let min_energy = settings.min_energy;
     let min_y = settings.min_y;
     let min_mel = settings.min_mel;
     // Concatenate the array views along Axis 0
     let merged_frames = concatenate(Axis(1), &array_views).unwrap();
-
     let shape = merged_frames.raw_dim();
     let width = shape[1];
     let height = shape[0];
@@ -294,14 +282,14 @@ pub fn as_image(
     gradient_positions: &HashSet<(usize, usize)>,
 ) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
-    let merged_frames = concatenate(Axis(1), &array_views).unwrap();
-    let shape = merged_frames.raw_dim();
+    let array_view = concatenate(Axis(1), &array_views).unwrap();
+    let shape = array_view.raw_dim();
     let width = shape[1];
     let height = shape[0];
     let mut img_buffer = ImageBuffer::new(width as u32, height as u32);
 
-    let max_val = merged_frames.fold(0.0, |acc: f64, &val| acc.max(val));
-    let scaled_image: Array2<u8> = merged_frames.mapv(|val| (val * (255.0 / max_val)) as u8);
+    let max_val = array_view.fold(0.0, |acc: f64, &val| acc.max(val));
+    let scaled_image: Array2<u8> = array_view.mapv(|val| (val * (255.0 / max_val)) as u8);
 
     let tint_value = 200;
 
@@ -370,7 +358,9 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quant::{load_tga_8bit, to_array2};
+    use crate::quant::{dequantize, load_tga_8bit, quantize, to_array2};
+    use fast_image_resize as fr;
+    use std::num::NonZeroU32;
 
     //#[test]
     fn test_speech_detection() {
@@ -428,8 +418,8 @@ mod tests {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 3,
-            min_x: 5,
+            min_y: 6,
+            min_x: 1,
             min_mel: 0,
             min_frames: 100,
         };
@@ -457,8 +447,8 @@ mod tests {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 5,
-            min_x: 5,
+            min_y: 3,
+            min_x: 6,
             min_mel: 0,
             min_frames: 100,
         };
@@ -481,15 +471,15 @@ mod tests {
         img.save("../doc/vad.png").unwrap();
     }
 
-    #[test]
+    //    #[test]
     fn test_stage() {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 4,
-            min_x: 4,
+            min_y: 3,
+            min_x: 3,
             min_mel: 0,
-            min_frames: 100,
+            min_frames: 50,
         };
         let mut stage = VoiceActivityDetector::new(&settings);
 
@@ -504,11 +494,8 @@ mod tests {
 
         let start = std::time::Instant::now();
 
-        let mut res = Vec::new();
         for mel in &chunks {
-            if let Some((idx, _, _)) = stage.add(&mel) {
-                res.push(idx);
-            }
+            if let Some((_, _)) = stage.add(&mel) {}
         }
         let elapsed = start.elapsed().as_millis();
         dbg!(elapsed);

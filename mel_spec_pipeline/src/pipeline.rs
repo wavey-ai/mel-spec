@@ -1,9 +1,72 @@
-use crossbeam_channel::{unbounded, Receiver, SendError, Sender};
+use crossbeam_channel::{bounded, unbounded, Receiver, SendError, Sender};
 use mel_spec::prelude::*;
-use ndarray::Array2;
+use mel_spec::vad::duration_ms_for_n_frames;
+use ndarray::{Array1, Array2};
+use num::Complex;
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+#[derive(Debug)]
+pub struct MelFrame {
+    mel: Array2<f64>,
+    idx: usize,
+}
+
+impl MelFrame {
+    pub fn new(mel: Array2<f64>, idx: usize) -> Self {
+        MelFrame { mel, idx }
+    }
+
+    pub fn get_mel(&self) -> &Array2<f64> {
+        &self.mel
+    }
+
+    pub fn get_idx(&self) -> usize {
+        self.idx
+    }
+}
+
+#[derive(Debug)]
+pub struct VadResult {
+    start: usize,
+    end: usize,
+    ms: usize,
+    active: bool,
+    gaps: Vec<usize>,
+}
+
+impl VadResult {
+    pub fn new(start: usize, end: usize, ms: usize, active: bool, gaps: Vec<usize>) -> Self {
+        VadResult {
+            start,
+            end,
+            ms,
+            active,
+            gaps,
+        }
+    }
+
+    pub fn get_start(&self) -> usize {
+        self.start
+    }
+
+    pub fn get_end(&self) -> usize {
+        self.end
+    }
+
+    pub fn get_ms(&self) -> usize {
+        self.ms
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    pub fn get_gaps(&self) -> &Vec<usize> {
+        &self.gaps
+    }
+}
 
 pub struct AudioConfig {
     bit_depth: usize,
@@ -20,7 +83,7 @@ impl AudioConfig {
 }
 
 pub struct PipelineConfig {
-    vad_config: Option<DetectionSettings>,
+    vad_config: DetectionSettings,
     mel_config: MelConfig,
     audio_config: AudioConfig,
 }
@@ -29,7 +92,7 @@ impl PipelineConfig {
     pub fn new(
         audio_config: AudioConfig,
         mel_config: MelConfig,
-        vad_config: Option<DetectionSettings>,
+        vad_config: DetectionSettings,
     ) -> Self {
         Self {
             audio_config,
@@ -42,8 +105,10 @@ pub struct Pipeline {
     // we drop pcm_tx by setting it to None, thereby removing all references to it.
     pcm_tx: Option<Sender<Vec<f32>>>,
     pcm_rx: Receiver<Vec<f32>>,
-    stt_tx: Arc<Mutex<Option<Sender<(usize, Array2<f64>)>>>>,
-    stt_rx: Receiver<(usize, Array2<f64>)>,
+    mel_tx: Arc<Mutex<Option<Sender<MelFrame>>>>,
+    mel_rx: Receiver<MelFrame>,
+    vad_tx: Arc<Mutex<Option<Sender<VadResult>>>>,
+    vad_rx: Receiver<VadResult>,
     config: PipelineConfig,
 }
 
@@ -56,15 +121,19 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn new(config: PipelineConfig) -> Self {
         let (pcm_tx, pcm_rx): (Sender<Vec<f32>>, Receiver<Vec<f32>>) = unbounded();
-        let (stt_tx, stt_rx): (Sender<(usize, Array2<f64>)>, Receiver<(usize, Array2<f64>)>) =
-            unbounded();
+        let (mel_tx, mel_rx): (Sender<MelFrame>, Receiver<MelFrame>) = unbounded();
+        let (vad_tx, vad_rx): (Sender<VadResult>, Receiver<VadResult>) = unbounded();
 
-        let stt_tx_arc = Arc::new(Mutex::new(Some(stt_tx)));
+        let mel_tx_arc = Arc::new(Mutex::new(Some(mel_tx)));
+        let vad_tx_arc = Arc::new(Mutex::new(Some(vad_tx)));
+
         Self {
             pcm_tx: Some(pcm_tx),
             pcm_rx,
-            stt_tx: stt_tx_arc,
-            stt_rx,
+            mel_tx: mel_tx_arc,
+            mel_rx,
+            vad_tx: vad_tx_arc,
+            vad_rx,
             config,
         }
     }
@@ -74,9 +143,14 @@ impl Pipeline {
         self.pcm_tx.as_ref().expect("not closed").send(pcm.to_vec())
     }
 
-    /// receive frame index and spectrogram
-    pub fn rx(&self) -> Receiver<(usize, Array2<f64>)> {
-        self.stt_rx.clone()
+    /// receive spectrogram
+    pub fn mel_rx(&self) -> Receiver<MelFrame> {
+        self.mel_rx.clone()
+    }
+
+    /// receive voice-activity information
+    pub fn vad_rx(&self) -> Receiver<VadResult> {
+        self.vad_rx.clone()
     }
 
     /// to signal we are done streaming into the pipeline
@@ -92,80 +166,127 @@ impl Pipeline {
         let n_mels = self.config.mel_config.n_mels();
         let sampling_rate = self.config.mel_config.sampling_rate();
         let source_sampling_rate = self.config.audio_config.sampling_rate;
-        let vad_config = self.config.vad_config;
+        let vad_settings = self.config.vad_config;
         let mut handles = Vec::new();
 
-        let (samples_tx, samples_rx): (Sender<Vec<f32>>, Receiver<Vec<f32>>) = unbounded();
-        let (sr_tx, sr_rx): (Sender<Vec<f32>>, Receiver<Vec<f32>>) = unbounded();
-        let (fft_tx, fft_rx): (Sender<(usize, Array2<f64>)>, Receiver<(usize, Array2<f64>)>) =
+        let (samples_tx, samples_rx): (Sender<(usize, Vec<f32>)>, Receiver<(usize, Vec<f32>)>) =
             unbounded();
 
-        let pcm_rx_clone = self.pcm_rx.clone();
-        let stt_tx_clone = Arc::clone(&self.stt_tx);
+        let (sr_tx, sr_rx): (Sender<(usize, Vec<f32>)>, Receiver<(usize, Vec<f32>)>) = unbounded();
 
-        // PCM -> Short-Time FFT -> Mel Spectrogram -> Voice-Activity Detection -> Speech-To-Text?
-        let fft_handle = thread::spawn(move || {
-            let mut fft = Spectrogram::new(fft_size, hop_size);
+        let (mel_stt_tx, mel_stt_rx): (
+            Sender<(usize, Array1<Complex<f64>>)>,
+            Receiver<(usize, Array1<Complex<f64>>)>,
+        ) = bounded(1);
+
+        let (mel_vad_tx, mel_vad_rx): (
+            Sender<(usize, Array1<Complex<f64>>)>,
+            Receiver<(usize, Array1<Complex<f64>>)>,
+        ) = bounded(1);
+
+        let (mels_tx, mels_rx): (Sender<(usize, Array2<f64>)>, Receiver<(usize, Array2<f64>)>) =
+            bounded(2);
+
+        let pcm_rx_clone = self.pcm_rx.clone();
+        let mel_tx_clone = Arc::clone(&self.mel_tx);
+        let vad_tx_clone = Arc::clone(&self.vad_tx);
+
+        let mels_tx_clone = mels_tx.clone();
+        let mel_handle = thread::spawn(move || {
             let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
-            let mut settings = DetectionSettings::default();
-            if let Some(vad_config) = vad_config {
-                settings = vad_config;
+
+            while let Ok((idx, fft)) = mel_stt_rx.recv() {
+                let spec = mel.add(&fft);
+                if let Err(send_error) = mels_tx.send((idx, spec)) {}
             }
 
-            let mut vad = VoiceActivityDetector::new(&settings);
+            drop(mels_tx);
+        });
 
-            let mut idx = 0;
-            while let Ok(samples) = samples_rx.recv() {
-                // buffer up to an initial fft window
-                if let Some(complex) = fft.add(&samples) {
-                    let spec = mel.add(complex);
-                    if let Some(_) = vad_config {
-                        // buffer up to speech boundary
-                        if let Some((idx, _, frames)) = vad.add(&spec) {
-                            for frame in frames {
-                                if let Err(send_error) = fft_tx.send((idx, frame)) {
-                                    eprintln!("Failed to send message to fft: {:?}", send_error);
+        handles.push(mel_handle);
+
+        let mel_vad_handle = thread::spawn(move || {
+            let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels / 4);
+
+            while let Ok((idx, fft)) = mel_vad_rx.recv() {
+                let spec = mel.add(&fft);
+                if let Err(send_error) = mels_tx_clone.send((idx, spec)) {}
+            }
+
+            drop(mels_tx_clone);
+        });
+
+        handles.push(mel_vad_handle);
+
+        let vad_handle = thread::spawn(move || {
+            let mut vad = VoiceActivityDetector::new(&vad_settings);
+            let mut i = 0;
+            let mut mels: Vec<Array2<f64>> = vec![
+                Array2::from_elem((0, 0), 0.0),
+                Array2::from_elem((0, 0), 0.0),
+            ];
+            let mut last_cutsec = 0;
+            while let Ok((idx, fft)) = mels_rx.recv() {
+                if i == 2 {
+                    for (j, m) in mels.iter().enumerate() {
+                        if m.raw_dim()[0] != n_mels {
+                            let mel = mels[if j == 1 { 0 } else { 1 }].clone();
+                            if let Some((active, intersected)) = vad.add(m) {
+                                let result = VadResult {
+                                    start: last_cutsec,
+                                    end: idx,
+                                    ms: duration_ms_for_n_frames(hop_size, sampling_rate, idx),
+                                    active,
+                                    gaps: intersected,
+                                };
+                                if let Some(tx) = vad_tx_clone.lock().unwrap().as_ref() {
+                                    if let Err(send_error) = tx.send(result) {}
+                                }
+                                last_cutsec = idx.clone();
+                            } else {
+                                let result = MelFrame { idx, mel };
+                                if let Some(tx) = mel_tx_clone.lock().unwrap().as_ref() {
+                                    if let Err(send_error) = tx.send(result) {}
                                 }
                             }
                         }
-                    } else {
-                        if let Err(send_error) = fft_tx.send((idx, spec)) {
-                            eprintln!("Failed to send message to fft: {:?}", send_error);
-                        }
-                        idx += 1;
+
+                        i = 0;
                     }
+                }
+                mels[i] = fft;
+                i += 1;
+            }
+
+            if let Some(_) = mel_tx_clone.lock().unwrap().take() {
+                // At this point, mel_tx goes out of scope and will be dropped
+                // The lock is automatically released when mel_tx goes out of scope
+            }
+
+            if let Some(_) = vad_tx_clone.lock().unwrap().take() {
+                // At this point, vad_tx goes out of scope and will be dropped
+                // The lock is automatically released when vad_tx goes out of scope
+            }
+        });
+
+        handles.push(vad_handle);
+
+        let fft_handle = thread::spawn(move || {
+            let mut fft = Spectrogram::new(fft_size, hop_size);
+
+            while let Ok((idx, samples)) = samples_rx.recv() {
+                // buffer up to an initial fft window
+                if let Some(complex) = fft.add(&samples) {
+                    if let Err(send_error) = mel_stt_tx.send((idx, complex.clone())) {}
+                    if let Err(send_error) = mel_vad_tx.send((idx, complex)) {}
                 }
             }
 
-            if let Some((idx, frames)) = vad.flush() {
-                for frame in frames {
-                    if let Err(send_error) = fft_tx.send((idx, frame)) {
-                        eprintln!("Failed to send message to stt: {:?}", send_error);
-                    }
-                }
-            }
-
-            drop(fft_tx);
+            drop(mel_stt_tx);
+            drop(mel_vad_tx);
         });
 
         handles.push(fft_handle);
-
-        let stt_handle = thread::spawn(move || {
-            while let Ok(frames) = fft_rx.recv() {
-                if let Some(stt_tx) = stt_tx_clone.lock().unwrap().as_ref() {
-                    if let Err(send_error) = stt_tx.send(frames) {
-                        eprintln!("Failed to send message to stt: {:?}", send_error);
-                    }
-                }
-            }
-
-            if let Some(_) = stt_tx_clone.lock().unwrap().take() {
-                // At this point, stt_tx goes out of scope and will be dropped
-                // The lock is automatically released when stt_tx goes out of scope
-            }
-        });
-
-        handles.push(stt_handle);
 
         let sr_handle = thread::spawn(move || {
             let f_ratio = sampling_rate / source_sampling_rate;
@@ -178,10 +299,10 @@ impl Pipeline {
                 1,
             )
             .unwrap();
-            while let Ok(samples) = sr_rx.recv() {
+            while let Ok((idx, samples)) = sr_rx.recv() {
                 let samples = resampler.process(&[samples], None).unwrap();
                 let chan = samples[0].clone();
-                if let Err(send_error) = samples_tx.send(chan) {
+                if let Err(send_error) = samples_tx.send((idx, chan)) {
                     eprintln!("Failed to send message to fft: {:?}", send_error);
                 }
             }
@@ -193,18 +314,23 @@ impl Pipeline {
 
         // handler for external audio source.
         let pcm_handle = thread::spawn(move || {
+            let mut idx = 0;
             let mut accumulated_samples: Vec<f32> = Vec::new();
             while let Ok(samples) = pcm_rx_clone.recv() {
                 accumulated_samples.extend_from_slice(&samples);
                 while accumulated_samples.len() >= hop_size {
                     let (chunk, rest) = accumulated_samples.split_at(hop_size);
-                    sr_tx.send(chunk.to_vec()).unwrap();
+                    sr_tx.send((idx.clone(), chunk.to_vec())).unwrap();
+                    idx = idx.wrapping_add(1);
                     accumulated_samples = rest.to_vec();
                 }
             }
 
             if !accumulated_samples.is_empty() {
-                sr_tx.send(accumulated_samples.clone()).unwrap();
+                idx = idx.wrapping_add(1);
+                sr_tx
+                    .send((idx.clone(), accumulated_samples.clone()))
+                    .unwrap();
             }
 
             drop(sr_tx);
@@ -265,12 +391,13 @@ mod tests {
 
         let audio_config = AudioConfig::new(32, 16000.0);
         let mel_config = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-        let vad_config = DetectionSettings::new(1.0, 10, 5, 0, 100);
+        let vad_config = DetectionSettings::new(1.0, 3, 6, 0, 50);
 
-        let config = PipelineConfig::new(audio_config, mel_config, Some(vad_config));
+        let config = PipelineConfig::new(audio_config, mel_config, vad_config);
 
         let mut pl = Pipeline::new(config);
 
+        let start = std::time::Instant::now();
         let handles = pl.start();
 
         // chunk size can be anything, 88 is random
@@ -280,15 +407,16 @@ mod tests {
 
         pl.close_ingress();
 
-        let mut res = Vec::new();
-
-        while let Ok((idx, _)) = pl.rx().recv() {
-            res.push(idx);
+        while let Ok(res) = pl.vad_rx().recv() {
+            //dbg!(res);
         }
 
         for handle in handles {
             handle.join().unwrap();
         }
+
+        let elapsed = start.elapsed().as_millis();
+        dbg!(elapsed);
 
         //        assert_eq!(res.len(), 6);
     }

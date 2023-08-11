@@ -1,6 +1,6 @@
 use mel_spec::prelude::*;
 use mel_spec_audio::deinterleave_vecs_f32;
-use mel_spec_pipeline::{Pipeline, PipelineConfig};
+use mel_spec_pipeline::pipeline::{AudioConfig, Pipeline, PipelineConfig};
 use ndarray::Array2;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -8,8 +8,10 @@ use std::thread;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "mel_spec_example", about = "mel_spec example app")]
+#[structopt(name = "mel_tga", about = "mel_tga example app")]
 struct Command {
+    #[structopt(short, long, default_value = "80")]
+    mels: usize,
     #[structopt(short, long, default_value = "./")]
     out_dir: String,
 }
@@ -20,11 +22,13 @@ fn main() {
 
     let fft_size = 400;
     let hop_size = 160;
-    let n_mels = 80;
+    let n_mels = args.mels;
     let sampling_rate = 16000.0;
     let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
     let vad_settings = None;
-    let config = PipelineConfig::new(mel_settings, vad_settings);
+
+    let audio_config = AudioConfig::new(32, 16000.0);
+    let config = PipelineConfig::new(audio_config, mel_settings, vad_settings);
 
     let mut pipeline = Pipeline::new(config);
 
