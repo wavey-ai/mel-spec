@@ -32,19 +32,11 @@ pub struct VadResult {
     start: usize,
     end: usize,
     ms: usize,
-    active: bool,
-    gaps: Vec<usize>,
 }
 
 impl VadResult {
     pub fn new(start: usize, end: usize, ms: usize, active: bool, gaps: Vec<usize>) -> Self {
-        VadResult {
-            start,
-            end,
-            ms,
-            active,
-            gaps,
-        }
+        VadResult { start, end, ms }
     }
 
     pub fn get_start(&self) -> usize {
@@ -57,14 +49,6 @@ impl VadResult {
 
     pub fn get_ms(&self) -> usize {
         self.ms
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.active
-    }
-
-    pub fn get_gaps(&self) -> &Vec<usize> {
-        &self.gaps
     }
 }
 
@@ -231,13 +215,11 @@ impl Pipeline {
                     for (j, m) in mels.iter().enumerate() {
                         if m.raw_dim()[0] != n_mels {
                             let mel = mels[if j == 1 { 0 } else { 1 }].clone();
-                            if let Some((active, intersected)) = vad.add(m) {
+                            if let Some(gap) = vad.add(m) {
                                 let result = VadResult {
                                     start: last_cutsec,
                                     end: idx,
                                     ms: duration_ms_for_n_frames(hop_size, sampling_rate, idx),
-                                    active,
-                                    gaps: intersected,
                                 };
                                 if let Some(tx) = vad_tx_clone.lock().unwrap().as_ref() {
                                     if let Err(send_error) = tx.send(result) {}
@@ -391,7 +373,7 @@ mod tests {
 
         let audio_config = AudioConfig::new(32, 16000.0);
         let mel_config = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-        let vad_config = DetectionSettings::new(1.0, 3, 6, 0, 50);
+        let vad_config = DetectionSettings::new(1.0, 3, 6, 0);
 
         let config = PipelineConfig::new(audio_config, mel_config, vad_config);
 

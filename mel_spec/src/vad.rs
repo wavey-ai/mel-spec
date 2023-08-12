@@ -9,7 +9,6 @@ pub struct DetectionSettings {
     pub min_y: usize,
     pub min_x: usize,
     pub min_mel: usize,
-    pub min_frames: usize,
 }
 
 /// The purpose of these settings is to detect the "edges" of features in the
@@ -40,19 +39,12 @@ pub struct DetectionSettings {
 ///  
 /// See `doc/jfk_vad_boundaries.png` for a visualisation.
 impl DetectionSettings {
-    pub fn new(
-        min_energy: f64,
-        min_y: usize,
-        min_x: usize,
-        min_mel: usize,
-        min_frames: usize,
-    ) -> Self {
+    pub fn new(min_energy: f64, min_y: usize, min_x: usize, min_mel: usize) -> Self {
         Self {
             min_energy,
             min_y,
             min_x,
             min_mel,
-            min_frames,
         }
     }
 
@@ -80,17 +72,12 @@ impl DetectionSettings {
     pub fn min_mel(&self) -> usize {
         self.min_mel
     }
-
-    /// Min number of frames before looking for a speech boundary.
-    /// `100` is a good default.
-    pub fn min_frames(&self) -> usize {
-        self.min_frames
-    }
 }
 
 pub struct VoiceActivityDetector {
     mel_buffer: Vec<Array2<f64>>,
     settings: DetectionSettings,
+    idx: usize,
 }
 
 impl VoiceActivityDetector {
@@ -100,6 +87,7 @@ impl VoiceActivityDetector {
         Self {
             mel_buffer,
             settings: settings.to_owned(),
+            idx: 0,
         }
     }
 
@@ -108,33 +96,27 @@ impl VoiceActivityDetector {
     /// frames have accumulated. Otherwise, returns `None`.
     /// Use [`duration_ms_for_n_frames`] to get the start time in milliseconds
     /// from the frame index.
-    pub fn add(&mut self, frame: &Array2<f64>) -> Option<(bool, Vec<usize>)> {
-        self.mel_buffer.push(frame.to_owned());
-
-        let buffer_len = self.mel_buffer.len();
-        let min_frames = self.settings.min_frames;
+    pub fn add(&mut self, frame: &Array2<f64>) -> Option<bool> {
         let min_x = self.settings.min_x;
-
-        if buffer_len >= min_frames && (buffer_len - min_frames) % 20 == 0 {
-            // check if we are at cutable frame position
-            let window = &self.mel_buffer; //[buffer_len - min_y * 2..];
-            let edge_info = vad_boundaries(&window, &self.settings);
-            for idx in edge_info.non_intersected() {
-                if idx >= min_frames {
-                    // frames to process
-                    let frames = window[..idx].to_vec();
-                    // frames to carry forward to the new buffer
-                    self.mel_buffer = window[idx..].to_vec();
-
-                    if frames.len() > 0 {
-                        return Some((vad_on(&edge_info, min_x * 2), edge_info.non_intersected()));
-                    }
-
-                    break;
-                }
-            }
+        if self.idx == 100 {
+            self.mel_buffer = self.mel_buffer[(self.mel_buffer.len() - min_x)..].to_vec();
+            self.idx = min_x;
         }
-        None
+        self.mel_buffer.push(frame.to_owned());
+        self.idx += 1;
+        if self.idx < min_x {
+            return None;
+        }
+
+        // check if we are at cutable frame position
+        let window = &self.mel_buffer[self.idx - min_x..];
+        let edge_info = vad_boundaries(&window, &self.settings);
+        let ni = edge_info.non_intersected();
+        if ni.len() > 0 {
+            return Some(ni[ni.len() - 1] == min_x - 3);
+        } else {
+            return Some(false);
+        }
     }
 }
 
@@ -495,7 +477,7 @@ mod tests {
         let start = std::time::Instant::now();
 
         for mel in &chunks {
-            if let Some((_, _)) = stage.add(&mel) {}
+            if let Some(a) = stage.add(&mel, 0) {}
         }
         let elapsed = start.elapsed().as_millis();
         dbg!(elapsed);
