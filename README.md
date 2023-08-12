@@ -230,7 +230,7 @@ saved - see `examples`).
 * [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
 * [convert audio to mel spectrograms and save to image](examples/mel_tga)
 * [trasnscribe images with whisper.cpp](examples/tga_whisper)
-
+* [stream microphone to mel wasm worker](examples/browser)
 
 
 ### Discussion
