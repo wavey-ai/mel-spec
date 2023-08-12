@@ -1,3 +1,4 @@
+use crate::utils::downscale_frames;
 use image::{ImageBuffer, Rgb};
 use ndarray::{concatenate, s, Array, Array2, Axis};
 use std::collections::HashSet;
@@ -8,7 +9,6 @@ pub struct DetectionSettings {
     pub min_y: usize,
     pub min_x: usize,
     pub min_mel: usize,
-    pub min_frames: usize,
 }
 
 /// The purpose of these settings is to detect the "edges" of features in the
@@ -39,19 +39,12 @@ pub struct DetectionSettings {
 ///  
 /// See `doc/jfk_vad_boundaries.png` for a visualisation.
 impl DetectionSettings {
-    pub fn new(
-        min_energy: f64,
-        min_y: usize,
-        min_x: usize,
-        min_mel: usize,
-        min_frames: usize,
-    ) -> Self {
+    pub fn new(min_energy: f64, min_y: usize, min_x: usize, min_mel: usize) -> Self {
         Self {
             min_energy,
             min_y,
             min_x,
             min_mel,
-            min_frames,
         }
     }
 
@@ -79,29 +72,22 @@ impl DetectionSettings {
     pub fn min_mel(&self) -> usize {
         self.min_mel
     }
-
-    /// Min number of frames before looking for a speech boundary.
-    /// `100` is a good default.
-    pub fn min_frames(&self) -> usize {
-        self.min_frames
-    }
 }
 
 pub struct VoiceActivityDetector {
     mel_buffer: Vec<Array2<f64>>,
-    cutsec: usize,
     settings: DetectionSettings,
+    idx: usize,
 }
 
 impl VoiceActivityDetector {
     pub fn new(settings: &DetectionSettings) -> Self {
         let mel_buffer: Vec<Array2<f64>> = Vec::new();
-        let cutsec: usize = 0;
 
         Self {
             mel_buffer,
-            cutsec,
             settings: settings.to_owned(),
+            idx: 0,
         }
     }
 
@@ -110,41 +96,27 @@ impl VoiceActivityDetector {
     /// frames have accumulated. Otherwise, returns `None`.
     /// Use [`duration_ms_for_n_frames`] to get the start time in milliseconds
     /// from the frame index.
-    pub fn add(&mut self, frame: &Array2<f64>) -> Option<(usize, Vec<Array2<f64>>)> {
-        self.mel_buffer.push(frame.to_owned());
-
-        let buffer_len = self.mel_buffer.len();
-        let min_frames = self.settings.min_frames;
+    pub fn add(&mut self, frame: &Array2<f64>) -> Option<bool> {
         let min_x = self.settings.min_x;
-
-        if buffer_len >= min_frames {
-            // check if we are at cutable frame position
-            let window = &self.mel_buffer; //[buffer_len - min_y * 2..];
-            let edge_info = vad_boundaries(&window, &self.settings);
-            for idx in edge_info.non_intersected() {
-                if idx >= min_frames {
-                    let cutsec = self.cutsec.clone();
-                    self.cutsec = self.cutsec.wrapping_add(idx);
-                    // frames to process
-                    let frames = window[..idx].to_vec();
-                    // frames to carry forward to the new buffer
-                    self.mel_buffer = window[idx..].to_vec();
-
-                    if frames.len() > 0 && vad_on(&edge_info, min_x * 2) {
-                        return Some((cutsec, frames.clone()));
-                    }
-
-                    break;
-                }
-            }
+        if self.idx == 100 {
+            self.mel_buffer = self.mel_buffer[(self.mel_buffer.len() - min_x)..].to_vec();
+            self.idx = min_x;
         }
-        None
-    }
+        self.mel_buffer.push(frame.to_owned());
+        self.idx += 1;
+        if self.idx < min_x {
+            return None;
+        }
 
-    /// Return the accumulated buffer in full, without doing edge detection.
-    /// Useful to call at the end of a pipeline.
-    pub fn flush(&self) -> Option<(usize, Vec<Array2<f64>>)> {
-        Some((self.cutsec.clone(), self.mel_buffer.to_owned()))
+        // check if we are at cutable frame position
+        let window = &self.mel_buffer[self.idx - min_x..];
+        let edge_info = vad_boundaries(&window, &self.settings);
+        let ni = edge_info.non_intersected();
+        if ni.len() > 0 {
+            return Some(ni[ni.len() - 1] == min_x - 3);
+        } else {
+            return Some(false);
+        }
     }
 }
 
@@ -183,7 +155,6 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
     let min_mel = settings.min_mel;
     // Concatenate the array views along Axis 0
     let merged_frames = concatenate(Axis(1), &array_views).unwrap();
-
     let shape = merged_frames.raw_dim();
     let width = shape[1];
     let height = shape[0];
@@ -227,14 +198,13 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
 
         if num_intersections <= min_y {
             non_intersected_columns.push(x);
-        }
-        if num_intersections >= min_y {
+        } else if num_intersections >= min_y {
             intersected_columns.push(x);
 
             // Store the gradient positions for this column
-            for y in indices {
-                gradient_positions.insert((x, y));
-            }
+            //            for y in indices {
+            //                gradient_positions.insert((x, y));
+            //:            }
         }
     }
 
@@ -294,14 +264,14 @@ pub fn as_image(
     gradient_positions: &HashSet<(usize, usize)>,
 ) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
-    let merged_frames = concatenate(Axis(1), &array_views).unwrap();
-    let shape = merged_frames.raw_dim();
+    let array_view = concatenate(Axis(1), &array_views).unwrap();
+    let shape = array_view.raw_dim();
     let width = shape[1];
     let height = shape[0];
     let mut img_buffer = ImageBuffer::new(width as u32, height as u32);
 
-    let max_val = merged_frames.fold(0.0, |acc: f64, &val| acc.max(val));
-    let scaled_image: Array2<u8> = merged_frames.mapv(|val| (val * (255.0 / max_val)) as u8);
+    let max_val = array_view.fold(0.0, |acc: f64, &val| acc.max(val));
+    let scaled_image: Array2<u8> = array_view.mapv(|val| (val * (255.0 / max_val)) as u8);
 
     let tint_value = 200;
 
@@ -370,9 +340,11 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quant::{load_tga_8bit, to_array2};
+    use crate::quant::{dequantize, load_tga_8bit, quantize, to_array2};
+    use fast_image_resize as fr;
+    use std::num::NonZeroU32;
 
-    #[test]
+    //#[test]
     fn test_speech_detection() {
         let n_mels = 80;
         let min_x = 5;
@@ -381,7 +353,6 @@ mod tests {
             min_y: 10,
             min_x,
             min_mel: 0,
-            min_frames: 100,
         };
 
         let ids = vec![21168, 23760, 41492, 41902, 63655, 7497, 39744];
@@ -428,10 +399,9 @@ mod tests {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 3,
-            min_x: 5,
+            min_y: 6,
+            min_x: 1,
             min_mel: 0,
-            min_frames: 100,
         };
 
         let start = std::time::Instant::now();
@@ -457,10 +427,9 @@ mod tests {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 5,
-            min_x: 5,
+            min_y: 3,
+            min_x: 6,
             min_mel: 0,
-            min_frames: 100,
         };
 
         let start = std::time::Instant::now();
@@ -481,15 +450,14 @@ mod tests {
         img.save("../doc/vad.png").unwrap();
     }
 
-    #[test]
+    //    #[test]
     fn test_stage() {
         let n_mels = 80;
         let settings = DetectionSettings {
             min_energy: 1.0,
-            min_y: 4,
-            min_x: 4,
-            min_mel: 4,
-            min_frames: 100,
+            min_y: 3,
+            min_x: 3,
+            min_mel: 0,
         };
         let mut stage = VoiceActivityDetector::new(&settings);
 
@@ -502,11 +470,12 @@ mod tests {
             .map(|chunk| chunk.to_owned())
             .collect();
 
-        let mut res = Vec::new();
+        let start = std::time::Instant::now();
+
         for mel in &chunks {
-            if let Some((idx, _)) = stage.add(&mel) {
-                res.push(idx);
-            }
+            if let Some(a) = stage.add(&mel) {}
         }
+        let elapsed = start.elapsed().as_millis();
+        dbg!(elapsed);
     }
 }

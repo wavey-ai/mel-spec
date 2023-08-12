@@ -13,7 +13,7 @@ impl MelSpectrogram {
         Self { filters }
     }
 
-    pub fn add(&mut self, fft: Array1<Complex<f64>>) -> Array2<f64> {
+    pub fn add(&mut self, fft: &Array1<Complex<f64>>) -> Array2<f64> {
         let mel = log_mel_spectrogram(&fft, &self.filters);
         let norm = norm_mel(&mel);
         norm
@@ -96,7 +96,7 @@ pub fn interleave_frames(
     // Ensure an even number of frames by padding with a zeroed frame if necessary
     // *important* mel spectrograms must have even number of columns, otherwise
     // whisper model will give random results.
-    if num_frames % 2 != 0 {
+    if min_width > 0 && num_frames % 2 != 0 {
         frames.push(Array2::from_shape_fn((num_filters, 1), |(_, _)| 0.0));
         num_frames += 1;
     }
@@ -339,7 +339,7 @@ mod tests {
         // Example input data for the FFT
         let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
         // Add the FFT data to the MelSpectrogram
-        let mel_spec = stage.add(fft_input);
+        let mel_spec = stage.add(&fft_input);
         // Ensure that the output Mel spectrogram has the correct shape
         assert_eq!(mel_spec.shape(), &[n_mels, 1]);
     }

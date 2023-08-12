@@ -4,9 +4,9 @@ members = [
   "mel_spec",
   "mel_spec_pipeline",
   "mel_spec_audio",
+  "examples/mel_tga",
 ]
 
-exclude = ["examples"]
 
 [workspace.package]
 version = "0.2.2"
