@@ -18,11 +18,11 @@ impl MelFrame {
         MelFrame { mel, idx }
     }
 
-    pub fn get_mel(&self) -> &Array2<f64> {
+    pub fn frame(&self) -> &Array2<f64> {
         &self.mel
     }
 
-    pub fn get_idx(&self) -> usize {
+    pub fn idx(&self) -> usize {
         self.idx
     }
 }

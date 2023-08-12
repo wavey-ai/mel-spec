@@ -353,7 +353,6 @@ mod tests {
             min_y: 10,
             min_x,
             min_mel: 0,
-            min_frames: 100,
         };
 
         let ids = vec![21168, 23760, 41492, 41902, 63655, 7497, 39744];
@@ -403,7 +402,6 @@ mod tests {
             min_y: 6,
             min_x: 1,
             min_mel: 0,
-            min_frames: 100,
         };
 
         let start = std::time::Instant::now();
@@ -432,7 +430,6 @@ mod tests {
             min_y: 3,
             min_x: 6,
             min_mel: 0,
-            min_frames: 100,
         };
 
         let start = std::time::Instant::now();
@@ -461,7 +458,6 @@ mod tests {
             min_y: 3,
             min_x: 3,
             min_mel: 0,
-            min_frames: 50,
         };
         let mut stage = VoiceActivityDetector::new(&settings);
 
@@ -477,7 +473,7 @@ mod tests {
         let start = std::time::Instant::now();
 
         for mel in &chunks {
-            if let Some(a) = stage.add(&mel, 0) {}
+            if let Some(a) = stage.add(&mel) {}
         }
         let elapsed = start.elapsed().as_millis();
         dbg!(elapsed);

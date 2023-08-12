@@ -339,7 +339,7 @@ mod tests {
         // Example input data for the FFT
         let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
         // Add the FFT data to the MelSpectrogram
-        let mel_spec = stage.add(fft_input);
+        let mel_spec = stage.add(&fft_input);
         // Ensure that the output Mel spectrogram has the correct shape
         assert_eq!(mel_spec.shape(), &[n_mels, 1]);
     }
