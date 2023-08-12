@@ -32,10 +32,10 @@ async function startAudioProcessing(audioContext) {
   volume.connect(audioNode);
   audioNode.connect(audioContext.destination);
 
-  const melSab = sharedbuffer(nMels, 1024, Uint8ClampedArray);
-  const melBuf = ringbuffer(melSab, nMels, 1024, Uint8ClampedArray);
-  const pcmSab = sharedbuffer(128, 1024, Float32Array);
-  const pcmBuf = ringbuffer(pcmSab, 128, 1024, Float32Array);
+  const melSab = sharedbuffer(nMels, 64, Uint8ClampedArray);
+  const melBuf = ringbuffer(melSab, nMels, 64, Uint8ClampedArray);
+  const pcmSab = sharedbuffer(128, 64, Float32Array);
+  const pcmBuf = ringbuffer(pcmSab, 128, 64, Float32Array);
 
   setTimeout(() => {
     worker.postMessage({
@@ -58,18 +58,8 @@ async function startAudioProcessing(audioContext) {
   const ctx = canvas.getContext("2d");
   const columnWidth = 1;
   const canvasHeight = 130;
-  ctx.fillStyle = "rgb(0, 0, 0)";
+  ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.imageSmoothingEnabled = false;
-  const arr = new Uint8ClampedArray((nMels + 8) * 4);
-  for (let i = 0; i < arr.length; i += 4) {
-    arr[i + 0] = 255; // R value
-    arr[i + 1] = 255; // G value
-    arr[i + 2] = 255; // B value
-    arr[i + 3] = 255; // A value
-  }
-
-  const boundary = new ImageData(arr, 1);
 
   let addFrame = (frame, vad) => {
     if (frame && frame.length > 0) {
@@ -100,7 +90,7 @@ async function startAudioProcessing(audioContext) {
         for (let i = 0; i < columnData.length; i++) {
           let val = columnData[columnData.length - i];
           arr[i * 4 + 0] = val; // R value
-          arr[i * 4 + 1] = 50; // G value
+          arr[i * 4 + 1] = vad ? 150 : 50; // G value
           arr[i * 4 + 2] = val; // B value
           arr[i * 4 + 3] = 255; // A value
         }
@@ -118,11 +108,9 @@ async function startAudioProcessing(audioContext) {
       ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
 
       if (vad) {
-        // Draw a green circle when vad is true
-        ctx.fillStyle = "red";
+        ctx.fillStyle = "#4e943d";
       } else {
-        // Draw a red circle when vad is false
-        ctx.fillStyle = "blue";
+        ctx.fillStyle = "#c140cb";
       }
 
       ctx.fill();
@@ -130,22 +118,18 @@ async function startAudioProcessing(audioContext) {
     }
   };
 
-  let i = 0;
-  let vad = false;
-  const updateIntervalMs = 5;
+  const updateIntervalMs = 10;
   function updateUI() {
-    const mel = melBuf.pop();
-    if (vad) {
-      i++
+    let frames = [];
+    while (true) {
+      const mel = melBuf.pop();
+      if (!mel) {
+        break;
+      }
+
+      let vad = mel && (mel[0] & 1) === 1;
+      addFrame(mel, vad);
     }
-    if (vad && i==100) {
-        vad = false;
-        i = 0;
-    }
-    if (!vad) {
-      vad = mel && (mel[0] & 1) === 1;
-    }
-    addFrame(mel, vad);
   }
   const updateIntervalId = setInterval(updateUI, updateIntervalMs);
 }

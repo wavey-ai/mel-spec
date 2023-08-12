@@ -1,19 +1,23 @@
-const test = require('tap').test;
-const { sharedbuffer, ringbuffer } = require('./../ringbuffer');
+const test = require("tap").test;
+const { sharedbuffer, ringbuffer } = require("./../ringbuffer");
 
-test('pop should return undefined when buffer is empty', (t) => {
+test("pop should return undefined when buffer is empty", (t) => {
   const frame_size = 4;
-  const max_frames = 8
+  const max_frames = 8;
 
   const sb = sharedbuffer(frame_size, max_frames, Uint8Array);
   const rb = ringbuffer(sb, frame_size, max_frames, Uint8Array);
   const poppedFrame = rb.pop();
-  t.equal(poppedFrame, undefined, 'Popping from an empty buffer should return undefined');
+  t.equal(
+    poppedFrame,
+    undefined,
+    "Popping from an empty buffer should return undefined"
+  );
 
   t.end();
 });
 
-test('fifo push and pop', (t) => {
+test("fifo push and pop", (t) => {
   const frame_size = 4;
   const max_frames = 100;
   const sb = sharedbuffer(frame_size, max_frames, Uint8Array);
@@ -42,7 +46,7 @@ test('fifo push and pop', (t) => {
   t.end();
 });
 
-test('fifo push and pop float', (t) => {
+test("fifo push and pop float", (t) => {
   const frame_size = 4;
   const max_frames = 100;
   const sb = sharedbuffer(frame_size, max_frames, Float32Array);
@@ -68,7 +72,7 @@ test('fifo push and pop float', (t) => {
   t.end();
 });
 
-test('push and pop with wrapping', (t) => {
+test("push and pop with wrapping", (t) => {
   const frame_size = 4;
   const max_frames = 2;
 
@@ -95,7 +99,7 @@ test('push and pop with wrapping', (t) => {
   t.end();
 });
 
-test('push and pop with wrapping overwrite', (t) => {
+test("push and pop with wrapping overwrite", (t) => {
   const frame_size = 4;
   const max_frames = 2;
 
@@ -121,7 +125,7 @@ test('push and pop with wrapping overwrite', (t) => {
   t.end();
 });
 
-test('push and pop with multiple wrapping overwrite', (t) => {
+test("push and pop with multiple wrapping overwrite", (t) => {
   const frame_size = 4;
   const max_frames = 2;
 
@@ -150,7 +154,7 @@ test('push and pop with multiple wrapping overwrite', (t) => {
   t.end();
 });
 
-test('float data type multiple', (t) => {
+test("float data type multiple", (t) => {
   const frame_size = 4;
   const max_frames = 2;
 
@@ -180,7 +184,7 @@ test('float data type multiple', (t) => {
   t.end();
 });
 
-test('float data type', (t) => {
+test("float data type", (t) => {
   const frame_size = 4;
   const max_frames = 2;
 
@@ -202,6 +206,45 @@ test('float data type', (t) => {
   t.same(rb.pop(), undefined);
 
   t.same(rb.dropped_count(), 2);
+
+  t.end();
+});
+
+test("push and pop with", (t) => {
+  const frame_size = 2;
+  const max_frames = 64;
+
+  const sb = sharedbuffer(frame_size, max_frames, Uint8Array);
+  const rb = ringbuffer(sb, frame_size, max_frames, Uint8Array);
+
+  const a = [];
+  for (let i = 0; i < 100; i++) {
+    a.push(new Uint8Array([i, 0]));
+  }
+  const b = [];
+  for (let i = 0; i < 100; i++) {
+    b.push(new Uint8Array([i, 1]));
+  }
+
+  for (let i = 0; i < a.length; i++) {
+    rb.push(a[i]);
+    rb.push(b[i]);
+
+    const res = [];
+
+    while (true) {
+      let r = rb.pop();
+      if (r) {
+        res.push(r);
+      } else {
+        break;
+      }
+    }
+
+    t.same(res[0], a[i]);
+    t.same(res[1], b[i]);
+    t.same(res.length, 2);
+  }
 
   t.end();
 });

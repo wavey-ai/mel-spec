@@ -49,7 +49,8 @@ function ringbuffer(sab, frame_size, max_frames, dataType) {
 
     if (wrap_flag() && current_offset(r_ptr) === offset) {
       Atomics.store(wrap_flag_b, 0, 0);
-      Atomics.store(dropped_b, 0, dropped_count() + (in_count() - out_count()));
+      const dropped = dropped_count() + (in_count() - out_count());
+      Atomics.store(dropped_b, 0, dropped);
       Atomics.store(out_b, 0, in_count());
     }
 
