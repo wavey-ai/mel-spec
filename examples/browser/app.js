@@ -103,7 +103,7 @@ async function startAudioProcessing(audioContext) {
 
           let [r, g, b] = [];
           if (!vad) {
-            [r, g, b] = colorizeGrayscaleValue(val, "terrain", true);
+            [r, g, b] = colorizeGrayscaleValue(val, "plasma", true);
           } else {
             [r, g, b] = colorizeGrayscaleValue(val, "cividis", true);
           }
