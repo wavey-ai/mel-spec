@@ -92,13 +92,9 @@ impl VoiceActivityDetector {
     }
 
     /// Add Mel spectrogram - should be a single frame.
-    /// Returns the index of the first frame and a full spectrogram, if enough
-    /// frames have accumulated. Otherwise, returns `None`.
-    /// Use [`duration_ms_for_n_frames`] to get the start time in milliseconds
-    /// from the frame index.
-    pub fn add(&mut self, frame: &Array2<f64>) -> Option<bool> {
+    pub fn add(&mut self, frame: &Array2<f64>) -> Option<(bool)> {
         let min_x = self.settings.min_x;
-        if self.idx == 100 {
+        if self.idx == 128 {
             self.mel_buffer = self.mel_buffer[(self.mel_buffer.len() - min_x)..].to_vec();
             self.idx = min_x;
         }
@@ -111,9 +107,9 @@ impl VoiceActivityDetector {
         // check if we are at cutable frame position
         let window = &self.mel_buffer[self.idx - min_x..];
         let edge_info = vad_boundaries(&window, &self.settings);
-        let ni = edge_info.non_intersected();
+        let ni = edge_info.intersected();
         if ni.len() > 0 {
-            return Some(ni[ni.len() - 1] == min_x - 3);
+            return Some(ni[0] == 0);
         } else {
             return Some(false);
         }

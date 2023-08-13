@@ -9,6 +9,18 @@ const hopSize = 160;
 const samplingRate = 16000;
 const nMels = 80;
 
+function convertToFloat(grayscaleValue) {
+  return grayscaleValue / 255;
+}
+
+function colorizeGrayscaleValue(value, colormapName, reverse) {
+  const x = convertToFloat(value);
+
+  const colorTuple = evaluate_cmap(x, colormapName, reverse);
+
+  return colorTuple;
+}
+
 async function startAudioProcessing(audioContext) {
   await wasm_bindgen();
   let worker = startup();
@@ -80,7 +92,6 @@ async function startAudioProcessing(audioContext) {
       );
       ctx.globalCompositeOperation = "source-over";
 
-      // Draw each column on the right side of the canvas
       for (let col = 0; col < numColumns; col++) {
         const startIdx = col * nMels;
         const endIdx = Math.min(startIdx + nMels, frame.length);
@@ -88,10 +99,18 @@ async function startAudioProcessing(audioContext) {
 
         const arr = new Uint8ClampedArray(nMels * 4);
         for (let i = 0; i < columnData.length; i++) {
-          let val = columnData[columnData.length - i];
-          arr[i * 4 + 0] = val; // R value
-          arr[i * 4 + 1] = vad ? 150 : 50; // G value
-          arr[i * 4 + 2] = val; // B value
+          let val = columnData[i]; // Use the correct index
+
+          let [r, g, b] = [];
+          if (!vad) {
+            [r, g, b] = colorizeGrayscaleValue(val, "terrain", true);
+          } else {
+            [r, g, b] = colorizeGrayscaleValue(val, "cividis", true);
+          }
+
+          arr[i * 4 + 0] = r; // R value
+          arr[i * 4 + 1] = g; // G value
+          arr[i * 4 + 2] = b; // B value
           arr[i * 4 + 3] = 255; // A value
         }
 
@@ -108,9 +127,9 @@ async function startAudioProcessing(audioContext) {
       ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
 
       if (vad) {
-        ctx.fillStyle = "#4e943d";
+        ctx.fillStyle = "black";
       } else {
-        ctx.fillStyle = "#c140cb";
+        ctx.fillStyle = "red";
       }
 
       ctx.fill();
