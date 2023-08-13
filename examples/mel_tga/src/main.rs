@@ -1,7 +1,6 @@
 use mel_spec::prelude::*;
-use mel_spec_audio::deinterleave_vecs_f32;
+use mel_spec_audio::packet::deinterleave_vecs_f32;
 use mel_spec_pipeline::pipeline::*;
-use ndarray::Array2;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::thread;
@@ -36,7 +35,7 @@ fn main() {
 
     let handle = thread::spawn(move || {
         let mut mels = Vec::new();
-        while let Ok((mel)) = rx_clone.recv() {
+        while let Ok(mel) = rx_clone.recv() {
             mels.push(mel.frame().to_owned());
         }
 

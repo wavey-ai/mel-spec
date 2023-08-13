@@ -1,9 +1,4 @@
 use mel_spec::prelude::*;
-use mel_spec::vad::{duration_ms_for_n_frames, format_milliseconds};
-use mel_spec_audio::deinterleave_vecs_f32;
-use mel_spec_pipeline::{Pipeline, PipelineConfig};
-use std::io::{self, Read};
-use std::thread;
 use structopt::StructOpt;
 use whisper_rs::*;
 

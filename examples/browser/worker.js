@@ -26,7 +26,6 @@ async function init_wasm_in_worker() {
     const melBuf = ringbuffer(event.data.melSab, opt.nMels, 64, Uint8ClampedArray);
     const pcmBuf = ringbuffer(event.data.pcmSab, 128, 64, Float32Array);
 
-    let idx = 0;
     while (true) {
       let samples = pcmBuf.pop();
       if (samples) {
@@ -35,10 +34,7 @@ async function init_wasm_in_worker() {
           let f = res.frame;
           f[0] = (res.va ? f[0] & ~ 1 : f[0] | 1);
           melBuf.push(f);
-        } else {
-          console.log("miss");
         }
-        idx++;
       }
     }
   };

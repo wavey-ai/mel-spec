@@ -337,15 +337,15 @@ impl PipelineOutputBuffer {
         }
     }
 
-    pub fn add(&mut self, idx: usize, frame: Array2<f64>) -> Option<Vec<f32>> {
+    pub fn add(&mut self, idx: usize, frame: &Array2<f64>) -> Option<Vec<f32>> {
         if idx != self.idx {
             let window = self.buffer.clone();
             self.buffer.drain(..);
             self.idx = idx;
-            let frames = interleave_frames(&window, false, 100);
+            let frames: Vec<f32> = interleave_frames(&window, false, 100);
             return Some(frames);
         } else {
-            self.buffer.push(frame);
+            self.buffer.push(frame.to_owned());
         }
 
         None

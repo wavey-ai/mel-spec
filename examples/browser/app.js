@@ -84,11 +84,11 @@ async function startAudioProcessing(audioContext) {
         numColumns * columnWidth,
         0,
         canvas.width - numColumns * columnWidth,
-        nMels + 8,
+        nMels + 16,
         0,
         0,
         canvas.width - numColumns * columnWidth,
-        nMels + 8
+        nMels + 16
       );
       ctx.globalCompositeOperation = "source-over";
 
@@ -97,12 +97,12 @@ async function startAudioProcessing(audioContext) {
         const endIdx = Math.min(startIdx + nMels, frame.length);
         const columnData = frame.slice(startIdx, endIdx);
 
-        const arr = new Uint8ClampedArray(nMels * 4);
+        let arr = new Uint8ClampedArray(nMels * 4);
         for (let i = 0; i < columnData.length; i++) {
           let val = columnData[i]; // Use the correct index
 
           let [r, g, b] = [];
-          if (!vad) {
+          if (vad) {
             [r, g, b] = colorizeGrayscaleValue(val, "plasma", true);
           } else {
             [r, g, b] = colorizeGrayscaleValue(val, "cividis", true);
@@ -114,13 +114,25 @@ async function startAudioProcessing(audioContext) {
           arr[i * 4 + 3] = 255; // A value
         }
 
+        for (let i = 0; i < 2 * (vad ? 6 : 4); i++) {
+          arr = new Uint8ClampedArray([...arr, 0, 0, 0, 0]);
+        }
+
+        const [pixelR, pixelG, pixelB] = vad ? [255, 0, 0] : [0, 0, 0];
+        let yOffset = vad ? 8 : 0; // Offset for vad true condition
+        for (let i = 0; i < 4; i++) {
+          arr[arr.length - 4 * (4 - i)] = pixelR; // R value
+          arr[arr.length - 4 * (4 - i) + 1] = pixelG; // G value
+          arr[arr.length - 4 * (4 - i) + 2] = pixelB; // B value
+          arr[arr.length - 4 * (4 - i) + 3] = 255; // A value
+        }
+
         const imageData = new ImageData(arr, 1);
         ctx.putImageData(imageData, canvas.width - numColumns + col, 0);
       }
-
       // Draw circle based on vad flag
       const centerX = Math.floor(canvas.width / 2);
-      const centerY = 100;
+      const centerY = 110;
       const circleRadius = 10; // Adjust the radius as needed
 
       ctx.beginPath();
@@ -146,7 +158,7 @@ async function startAudioProcessing(audioContext) {
         break;
       }
 
-      let vad = mel && (mel[0] & 1) === 1;
+      let vad = !(mel && (mel[0] & 1) === 1);
       addFrame(mel, vad);
     }
   }

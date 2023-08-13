@@ -1,7 +1,7 @@
 use mel_spec::prelude::*;
 use mel_spec::vad::{duration_ms_for_n_frames, format_milliseconds};
-use mel_spec_audio::deinterleave_vecs_f32;
-use mel_spec_pipeline::{Pipeline, PipelineConfig, PipelineOutputBuffer};
+use mel_spec_audio::packet::deinterleave_vecs_f32;
+use mel_spec_pipeline::prelude::*;
 use std::io::{self, Read};
 use std::thread;
 use structopt::StructOpt;
@@ -47,13 +47,14 @@ fn main() {
     let sampling_rate = 16000.0;
 
     let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-    let vad_settings = DetectionSettings::new(min_power, min_y, min_x, min_mel, min_frames);
+    let vad_settings = DetectionSettings::new(min_power, min_y, min_x, min_mel);
+    let audio_config = AudioConfig::new(32, 16000.0);
 
-    let config = PipelineConfig::new(mel_settings, Some(vad_settings));
+    let config = PipelineConfig::new(audio_config, mel_settings, vad_settings);
 
     let mut pipeline = Pipeline::new(config);
 
-    let rx_clone = pipeline.rx();
+    let rx_clone = pipeline.mel_rx();
     let mut handles = pipeline.start();
 
     let handle = thread::spawn(move || {
@@ -61,12 +62,12 @@ fn main() {
         let mut state = ctx.create_state().expect("failed to create key");
 
         let mut buf = PipelineOutputBuffer::new();
-        while let Ok((idx, mel)) = rx_clone.recv() {
-            if let Some(frames) = buf.add(idx, mel) {
-                let path = format!("{}/frame_{}.tga", mel_path, idx);
+        while let Ok(mel) = rx_clone.recv() {
+            if let Some(frames) = buf.add(mel.idx(), mel.frame()) {
+                let path = format!("{}/frame_{}.tga", mel_path, mel.idx());
                 let _ = save_tga_8bit(&frames, n_mels, &path);
 
-                let ms = duration_ms_for_n_frames(hop_size, sampling_rate, idx);
+                let ms = duration_ms_for_n_frames(hop_size, sampling_rate, mel.idx());
                 let time = format_milliseconds(ms as u64);
 
                 let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
@@ -85,7 +86,7 @@ fn main() {
                 let num_segments = state.full_n_segments().unwrap();
                 if num_segments > 0 {
                     if let Ok(text) = state.full_get_segment_text(0) {
-                        let msg = format!("{} [{}] {}", idx, time, text);
+                        let msg = format!("{} [{}] {}", mel.idx(), time, text);
                         println!("{}", msg);
                     } else {
                         println!("Error retrieving text for segment.");
