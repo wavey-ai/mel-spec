@@ -4,6 +4,16 @@ A Rust implementation of mel spectrograms aligned to the results from the
 whisper.cpp, pytorch and librosa reference implementations and suited to
 streaming audio.
 
+## Examples:
+
+![image](doc/browser.png)
+
+* [stream microphone or wav to mel wasm worker](examples/browser)
+* [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
+* [convert audio to mel spectrograms and save to image](examples/mel_tga)
+* [trasnscribe images with whisper.cpp](examples/tga_whisper)
+
+
 ## Usage
 
 To require the libary's main features:
@@ -224,14 +234,6 @@ and 1-second, can be found here:
 It will be possible to tidy up hallucinations by checking the spectrograms and
 refining the boundary detection (each segment/line has a corresponding spectrogram
 saved - see `examples`).
-
-### Example apps:
-
-* [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
-* [convert audio to mel spectrograms and save to image](examples/mel_tga)
-* [trasnscribe images with whisper.cpp](examples/tga_whisper)
-* [stream microphone to mel wasm worker](examples/browser)
-
 
 ### Discussion
 
