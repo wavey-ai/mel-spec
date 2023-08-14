@@ -25,7 +25,7 @@ use mel_spec::prelude::*
 Mel filterbanks, within 1.0e-7 of librosa and identical to whisper
 GGML model-embedded filters.
  
-```
+``` rust
         let file_path = "./testdata/mel_filters.npz";
         let f = File::open(file_path).unwrap();
         let mut npz = NpzReader::new(f).unwrap();
@@ -52,7 +52,7 @@ The implementation is suitable for processing streaming audio and
 will accumulate the correct amount of data before returning fft
 results.
 
-```
+``` rust
         let fft_size = 8;
         let hop_size = 4;
         let mut spectrogram = Spectrogram::new(fft_size, hop_size);
@@ -69,7 +69,7 @@ results.
 MelSpectrogram applies a pre-computed filerbank to an FFT result.
 Results are identical to whisper.cpp and whisper.py
 
-```
+``` rust
         let fft_size = 400;
         let sampling_rate = 16000.0;
         let n_mels = 80;
@@ -89,7 +89,7 @@ It also has voice activity detection that uses edge detection (which
 might be a novel approach) to identify word/speech boundaries in real-
 time.
 
-```
+``` rust
         // load the whisper jfk sample
         let file_path = "../testdata/jfk_f32le.wav";
         let file = File::open(&file_path).unwrap();
@@ -139,7 +139,7 @@ Note that spectrograms must have an even number of columns in the time domain,
 otherwise Whisper will hallucinate. the library takes care of this if using the
 core methods.
 
-```
+``` rust
      let file_path = "../testdata/jfk_full_speech_chunk0_golden.tga";
      let dequantized_mel = load_tga_8bit(file_path).unwrap();
      // dequantized_mel can be sent straight to whisper.cpp
@@ -184,7 +184,7 @@ possible word/speech boundaries. As you can see, it works pretty well:
 
 For reference, the settings used for this example are: 
 
-```
+``` rust
         let settings = DetectionSettings {
             min_energy: 1.0,
             min_y: 3,
