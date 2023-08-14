@@ -1,4 +1,5 @@
 const { startup } = wasm_bindgen;
+const { startup: startup_wav } = wasm_bindgen_wav;
 
 const canvas = document.getElementById("canvas");
 const canvasCtx = canvas.getContext("2d");
@@ -8,6 +9,11 @@ const fftSize = 1024;
 const hopSize = 160;
 const samplingRate = 16000;
 const nMels = 80;
+
+const melSab = sharedbuffer(nMels, 64, Uint8ClampedArray);
+const melBuf = ringbuffer(melSab, nMels, 64, Uint8ClampedArray);
+const pcmSab = sharedbuffer(128, 1024 * 4, Float32Array);
+const pcmBuf = ringbuffer(pcmSab, 128, 1024 * 4, Float32Array);
 
 function convertToFloat(grayscaleValue) {
   return grayscaleValue / 255;
@@ -21,50 +27,42 @@ function colorizeGrayscaleValue(value, colormapName, reverse) {
   return colorTuple;
 }
 
-async function startAudioProcessing(audioContext) {
-  await wasm_bindgen();
-  let worker = startup();
+let addFrame;
 
-  const audioStream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
+document.addEventListener("DOMContentLoaded", function () {
+  startWorker();
+  const form = document.getElementById("uploadForm");
+  const fileInput = document.getElementById("waveFileInput");
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+
+    await wasm_bindgen_wav();
+
+    let worker = startup_wav("./wav_worker.js");
+
+   const file = fileInput.files[0];
+    if (!file) {
+      alert("Please select a WAV file.");
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = function (event) {
+      const buf = event.target.result;
+      worker.postMessage({ buf });
+    };
+
+   setTimeout(() => {
+      worker.postMessage({
+        pcmSab,
+      });
+
+      reader.readAsArrayBuffer(file);
+    }, 500);
+
   });
-  const sourceSamplingRate = audioContext.sampleRate;
-
-  const volume = audioContext.createGain();
-  const audioInput = audioContext.createMediaStreamSource(audioStream);
-  audioInput.connect(volume);
-
-  try {
-    await audioContext.audioWorklet.addModule("./dist/worklet.js");
-  } catch (error) {
-    console.error("Error loading audio worklet:", error);
-  }
-
-  const audioNode = new AudioWorkletNode(audioContext, "AudioSender");
-  volume.connect(audioNode);
-  audioNode.connect(audioContext.destination);
-
-  const melSab = sharedbuffer(nMels, 64, Uint8ClampedArray);
-  const melBuf = ringbuffer(melSab, nMels, 64, Uint8ClampedArray);
-  const pcmSab = sharedbuffer(128, 64, Float32Array);
-  const pcmBuf = ringbuffer(pcmSab, 128, 64, Float32Array);
-
-  setTimeout(() => {
-    worker.postMessage({
-      options: {
-        sourceSamplingRate,
-        fftSize,
-        hopSize,
-        samplingRate,
-        nMels,
-      },
-      melSab,
-      pcmSab,
-    });
-    audioNode.port.postMessage({
-      pcmSab,
-    });
-  }, 500);
 
   const canvas = document.getElementById("canvas"); // Replace 'canvas' with the ID of your canvas element
   const ctx = canvas.getContext("2d");
@@ -73,7 +71,7 @@ async function startAudioProcessing(audioContext) {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  let addFrame = (frame, vad) => {
+  addFrame = (frame, vad) => {
     if (frame && frame.length > 0) {
       const numColumns = Math.ceil(frame.length / nMels);
 
@@ -131,7 +129,7 @@ async function startAudioProcessing(audioContext) {
         ctx.putImageData(imageData, canvas.width - numColumns + col, 0);
       }
       // Draw circle based on vad flag
-      const centerX = Math.floor(canvas.width / 2);
+      const centerX = 990;
       const centerY = 110;
       const circleRadius = 10; // Adjust the radius as needed
 
@@ -139,15 +137,34 @@ async function startAudioProcessing(audioContext) {
       ctx.arc(centerX, centerY, circleRadius, 0, 2 * Math.PI);
 
       if (vad) {
-        ctx.fillStyle = "black";
-      } else {
         ctx.fillStyle = "red";
+      } else {
+        ctx.fillStyle = "black";
       }
 
       ctx.fill();
       ctx.closePath();
     }
   };
+});
+
+async function startWorker() {
+  await wasm_bindgen();
+
+  let worker = startup("./worker.js");
+
+  setTimeout(() => {
+    worker.postMessage({
+      options: {
+        fftSize,
+        hopSize,
+        samplingRate,
+        nMels,
+      },
+      melSab,
+      pcmSab,
+    });
+  }, 500);
 
   const updateIntervalMs = 10;
   function updateUI() {
@@ -163,6 +180,33 @@ async function startAudioProcessing(audioContext) {
     }
   }
   const updateIntervalId = setInterval(updateUI, updateIntervalMs);
+}
+
+async function startAudioProcessing(audioContext) {
+  audioStream = await navigator.mediaDevices.getUserMedia({
+     audio: true,
+  });
+  const sourceSamplingRate = audioContext.sampleRate;
+
+  const volume = audioContext.createGain();
+  const audioInput = audioContext.createMediaStreamSource(audioStream);
+  audioInput.connect(volume);
+
+  try {
+    await audioContext.audioWorklet.addModule("./dist/worklet.js");
+  } catch (error) {
+    console.error("Error loading audio worklet:", error);
+  }
+
+  const audioNode = new AudioWorkletNode(audioContext, "AudioSender");
+  volume.connect(audioNode);
+  audioNode.connect(audioContext.destination);
+
+  setTimeout(() => {
+    audioNode.port.postMessage({
+      pcmSab,
+    });
+  }, 500);
 }
 
 startButton.addEventListener("click", () => {

@@ -1,16 +1,58 @@
+use crate::packet::deinterleave_vecs_f32;
 use std::convert::TryInto;
 use std::io::{Error, Read};
 
+#[derive(Debug)]
 pub struct AudioFileData {
     bits_per_sample: u8,
     channel_count: u8,
     sampling_rate: u32,
+    channels: Vec<Vec<f32>>,
     data: Vec<u8>,
+}
+
+impl AudioFileData {
+    pub fn new(
+        bits_per_sample: u8,
+        channel_count: u8,
+        sampling_rate: u32,
+        channels: Vec<Vec<f32>>,
+    ) -> Self {
+        AudioFileData {
+            bits_per_sample,
+            channel_count,
+            sampling_rate,
+            channels,
+            data: vec![0u8; 0],
+        }
+    }
+
+    pub fn bits_per_sample(&self) -> u8 {
+        self.bits_per_sample
+    }
+
+    pub fn channel_count(&self) -> u8 {
+        self.channel_count
+    }
+
+    pub fn sampling_rate(&self) -> u32 {
+        self.sampling_rate
+    }
+
+    pub fn channels(&self) -> &Vec<Vec<f32>> {
+        &self.channels
+    }
+
+    pub fn data(&self) -> &Vec<u8> {
+        &self.data
+    }
 }
 
 enum StreamWavState {
     Initial,
+    ReadToFmt,
     ReadingFmt,
+    ReadToData,
     ReadingData,
     Finished,
 }
@@ -18,6 +60,10 @@ enum StreamWavState {
 pub struct WavStreamProcessor {
     state: StreamWavState,
     buffer: Vec<u8>,
+    idx: usize,
+    bits_per_sample: usize,
+    channel_count: usize,
+    sampling_rate: usize,
 }
 
 impl WavStreamProcessor {
@@ -25,15 +71,15 @@ impl WavStreamProcessor {
         Self {
             state: StreamWavState::Initial,
             buffer: Vec::new(),
+            idx: 0,
+            bits_per_sample: 0,
+            channel_count: 0,
+            sampling_rate: 0,
         }
     }
 
-    pub fn process_chunk(&mut self, chunk: &[u8]) -> Result<Option<AudioFileData>, String> {
+    pub fn add(&mut self, chunk: &[u8]) -> Result<Option<AudioFileData>, String> {
         self.buffer.extend(chunk);
-
-        let mut sampling_rate: u32 = 0;
-        let mut bits_per_sample: u8 = 0;
-        let mut channel_count: u8 = 0;
 
         loop {
             match &self.state {
@@ -46,52 +92,91 @@ impl WavStreamProcessor {
                         return Err("Not a WAV file".to_string());
                     }
 
+                    self.state = StreamWavState::ReadToFmt;
+                    self.idx = 12;
+                }
+
+                StreamWavState::ReadToFmt => {
+                    if self.buffer.len() < self.idx + 4 {
+                        return Ok(None);
+                    }
+
+                    while &self.buffer[self.idx..self.idx + 4] != b"fmt " {
+                        let chunk_size = u32::from_le_bytes(
+                            self.buffer[self.idx + 4..self.idx + 8].try_into().unwrap(),
+                        ) as usize;
+                        self.idx += chunk_size + 8; // Advance to next chunk
+                        if self.buffer.len() < self.idx + 8 {
+                            return Ok(None);
+                        }
+                    }
                     self.state = StreamWavState::ReadingFmt;
                 }
 
                 StreamWavState::ReadingFmt => {
-                    if self.buffer.len() < 16 {
+                    if self.buffer.len() < self.idx + 24 {
                         return Ok(None); // Wait for more data
                     }
 
-                    let chunk_size =
-                        u32::from_le_bytes(self.buffer[4..8].try_into().unwrap()) as usize;
-                    if self.buffer.len() < chunk_size + 8 {
-                        return Ok(None); // Wait for more data
+                    let fmt_chunk = &self.buffer[self.idx..self.idx + 24];
+                    self.sampling_rate =
+                        u32::from_le_bytes(fmt_chunk[12..16].try_into().unwrap()) as usize;
+                    self.bits_per_sample =
+                        u16::from_le_bytes(fmt_chunk[22..24].try_into().unwrap()) as usize;
+                    self.channel_count =
+                        u16::from_le_bytes(fmt_chunk[10..12].try_into().unwrap()) as usize;
+
+                    self.state = StreamWavState::ReadToData;
+
+                    // Move idx to after "fmt " chunk
+                    let chunk_size = u32::from_le_bytes(
+                        self.buffer[self.idx + 4..self.idx + 8].try_into().unwrap(),
+                    ) as usize;
+                    self.idx += chunk_size + 8;
+                }
+
+                StreamWavState::ReadToData => {
+                    if self.buffer.len() < self.idx + 4 {
+                        return Ok(None);
                     }
 
-                    let fmt_chunk = &self.buffer[0..chunk_size + 8];
-                    sampling_rate =
-                        u32::from_le_bytes(fmt_chunk[12..16].try_into().unwrap()) as u32;
-                    bits_per_sample =
-                        u16::from_le_bytes(fmt_chunk[22..24].try_into().unwrap()) as u8;
-                    channel_count = u16::from_le_bytes(fmt_chunk[10..12].try_into().unwrap()) as u8;
+                    while &self.buffer[self.idx..self.idx + 4] != b"data" {
+                        let chunk_size = u32::from_le_bytes(
+                            self.buffer[self.idx + 4..self.idx + 8].try_into().unwrap(),
+                        ) as usize;
+                        self.idx += chunk_size + 8; // Advance to next chunk
+                        if self.buffer.len() < self.idx + 8 {
+                            return Ok(None);
+                        }
+                    }
 
-                    self.buffer.drain(0..chunk_size + 8);
                     self.state = StreamWavState::ReadingData;
+                    // Skip "data" and size
+                    self.buffer = self.buffer.split_off(self.idx + 8);
                 }
 
                 StreamWavState::ReadingData => {
-                    if self.buffer.len() < 8 {
+                    let bytes_per_sample = (self.bits_per_sample / 8) as usize;
+                    let bytes_per_frame = bytes_per_sample * self.channel_count as usize;
+
+                    if self.buffer.len() < bytes_per_sample * self.channel_count as usize {
                         return Ok(None); // Wait for more data
                     }
 
-                    let chunk_size =
-                        u32::from_le_bytes(self.buffer[4..8].try_into().unwrap()) as usize;
-                    if self.buffer.len() < chunk_size + 8 {
-                        return Ok(None); // Wait for more data
-                    }
+                    let frames_in_buffer = self.buffer.len() / bytes_per_frame;
+                    let len = frames_in_buffer * bytes_per_frame;
 
-                    let data_chunk = self.buffer[8..chunk_size + 8].to_vec();
+                    let data_chunk = self.buffer[..len].to_vec();
+                    self.buffer = self.buffer.split_off(len);
 
-                    self.buffer.drain(0..chunk_size + 8);
-                    self.state = StreamWavState::Finished;
+                    let channels = deinterleave_vecs_f32(&data_chunk, self.channel_count);
 
                     let result = AudioFileData {
-                        bits_per_sample,
-                        channel_count,
-                        sampling_rate,
-                        data: data_chunk,
+                        bits_per_sample: self.bits_per_sample as u8,
+                        channel_count: self.channel_count as u8,
+                        sampling_rate: self.sampling_rate as u32,
+                        channels,
+                        data: vec![0u8; 0],
                     };
 
                     return Ok(Some(result));
@@ -116,38 +201,74 @@ pub fn parse_wav<R: Read>(mut reader: R) -> Result<AudioFileData, String> {
         return Err("Not a WAV file".to_string());
     }
 
-    let mut position = 12; // After "WAVE"
+    let mut idx = 12; // After "WAVE"
 
-    while &buffer[position..position + 4] != b"fmt " {
-        let chunk_size =
-            u32::from_le_bytes(buffer[position + 4..position + 8].try_into().unwrap()) as usize;
-        position += chunk_size + 8; // Advance to next chunk
+    while &buffer[idx..idx + 4] != b"fmt " {
+        let chunk_size = u32::from_le_bytes(buffer[idx + 4..idx + 8].try_into().unwrap()) as usize;
+        idx += chunk_size + 8; // Advance to next chunk
     }
 
-    let fmt_chunk = &buffer[position..position + 24];
+    let fmt_chunk = &buffer[idx..idx + 24];
     let sampling_rate = u32::from_le_bytes(fmt_chunk[12..16].try_into().unwrap()) as u32;
     let bits_per_sample = u16::from_le_bytes(fmt_chunk[22..24].try_into().unwrap()) as u8;
     let channel_count = u16::from_le_bytes(fmt_chunk[10..12].try_into().unwrap()) as u8;
 
-    // Move position to after "fmt " chunk
-    let chunk_size =
-        u32::from_le_bytes(buffer[position + 4..position + 8].try_into().unwrap()) as usize;
-    position += chunk_size + 8;
+    // Move idx to after "fmt " chunk
+    let chunk_size = u32::from_le_bytes(buffer[idx + 4..idx + 8].try_into().unwrap()) as usize;
+    idx += chunk_size + 8;
 
-    while &buffer[position..position + 4] != b"data" {
-        let chunk_size =
-            u32::from_le_bytes(buffer[position + 4..position + 8].try_into().unwrap()) as usize;
-        position += chunk_size + 8; // Advance to next chunk
+    while &buffer[idx..idx + 4] != b"data" {
+        let chunk_size = u32::from_le_bytes(buffer[idx + 4..idx + 8].try_into().unwrap()) as usize;
+        idx += chunk_size + 8; // Advance to next chunk
     }
 
-    let data_chunk = buffer[position + 8..].to_vec(); // Skip "data" and size
+    let data_chunk = buffer[idx + 8..].to_vec(); // Skip "data" and size
 
     let result = AudioFileData {
         bits_per_sample,
         channel_count,
         sampling_rate,
+        channels: Vec::new(),
         data: data_chunk,
     };
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn test_wav_stream() {
+        // Load the whisper jfk sample
+        let file_path = "../testdata/jfk_f32le.wav";
+        let mut file = File::open(&file_path).unwrap();
+
+        let mut processor = WavStreamProcessor::new();
+        let mut audio_packets = Vec::new();
+        let mut buffer = [0u8; 1024];
+
+        loop {
+            let bytes_read = file.read(&mut buffer).unwrap();
+            if bytes_read == 0 {
+                break;
+            }
+
+            let chunk = &buffer[..bytes_read];
+            match processor.add(chunk) {
+                Ok(Some(audio_data)) => {
+                    audio_packets.push(audio_data);
+                }
+                Ok(None) => continue,
+                Err(err) => panic!("Error: {}", err),
+            }
+        }
+
+        // Perform your assertions or tests using the audio_packets vector
+        assert!(audio_packets.len() > 0, "No audio packets processed");
+
+        dbg!(&audio_packets[0]);
+    }
 }

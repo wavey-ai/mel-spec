@@ -355,7 +355,8 @@ impl PipelineOutputBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mel_spec_audio::*;
+    use mel_spec_audio::packet::*;
+    use mel_spec_audio::wav::*;
     use std::fs::File;
 
     #[test]
@@ -364,7 +365,9 @@ mod tests {
         let file_path = "../testdata/jfk_f32le.wav";
         let file = File::open(&file_path).unwrap();
         let data = parse_wav(file).unwrap();
-        let samples = deinterleave_vecs_f32(&data.data, 1);
+        let samples = deinterleave_vecs_f32(data.data(), 1);
+
+        dbg!(&samples[0][0]);
 
         let fft_size = 400;
         let hop_size = 160;

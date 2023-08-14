@@ -93,7 +93,7 @@ impl SpeechToMel {
 
 /// Run entry point for the main thread.
 #[wasm_bindgen]
-pub fn startup() -> Worker {
-    let worker_handle = Worker::new("./worker.js").unwrap();
+pub fn startup(path: String) -> Worker {
+    let worker_handle = Worker::new(&path).unwrap();
     worker_handle
 }

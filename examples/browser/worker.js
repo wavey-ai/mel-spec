@@ -13,7 +13,6 @@ async function init_wasm_in_worker() {
   console.log('Initializing worker')
 
   self.onmessage = async (event) => {
-    console.log(event);
     const opt = event.data.options;
 
     const mod = SpeechToMel.new(
@@ -24,12 +23,13 @@ async function init_wasm_in_worker() {
     );
     console.log("init");
     const melBuf = ringbuffer(event.data.melSab, opt.nMels, 64, Uint8ClampedArray);
-    const pcmBuf = ringbuffer(event.data.pcmSab, 128, 64, Float32Array);
+    const pcmBuf = ringbuffer(event.data.pcmSab, 128, 1024 * 4, Float32Array);
 
     while (true) {
       let samples = pcmBuf.pop();
       if (samples) {
         const res = mod.add(samples)
+        console.log(res);
         if (res.ok) {
           let f = res.frame;
           f[0] = (res.va ? f[0] & ~ 1 : f[0] | 1);

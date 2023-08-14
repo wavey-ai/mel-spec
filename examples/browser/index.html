@@ -3,18 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    body {
+       font-family: sans-serif;
+    }
+    canvas {
+      margin: 20px 0;
+    }
+  </style>
 </head>
 <body>
   <h3>
     Mel Spectrogram with Voice Activity Detection
   </h3>
-
-  <button id="startButton">Start</button>
-    <canvas id="canvas" height="150" width="1000"
+    <section>
+      <form style="display: inline;" id="uploadForm">
+      <input type="file" id="waveFileInput" accept=".wav" />
+      <button type="submit">Play File</button>
+    </form>
+    <button style="margin-left: 20px" id="startButton">Start Mic</button>
+    </section>
+   <canvas id="canvas" height="150" width="1000"
                 style="background-color:#FFFFFF;">
 
   <script src="./js-colormaps.js"></script>
   <script src='./dist/mel_spec_pipeline.js'></script>
+  <script src='./dist/mel_spec_audio.js'></script>
   <script src='./ringbuffer.js'></script>
   <script src="./app.js"></script>
 
