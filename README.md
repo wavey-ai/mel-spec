@@ -16,7 +16,7 @@ streaming audio.
 
 To require the libary's main features:
 
-```
+``` rust
 use mel_spec::prelude::*
 ```
 
