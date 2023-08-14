@@ -64,6 +64,8 @@ pub struct WavStreamProcessor {
     bits_per_sample: usize,
     channel_count: usize,
     sampling_rate: usize,
+    data_chunk_size: usize,
+    data_chunk_collected: usize,
 }
 
 impl WavStreamProcessor {
@@ -75,6 +77,8 @@ impl WavStreamProcessor {
             bits_per_sample: 0,
             channel_count: 0,
             sampling_rate: 0,
+            data_chunk_size: 0,
+            data_chunk_collected: 0,
         }
     }
 
@@ -128,7 +132,6 @@ impl WavStreamProcessor {
 
                     self.state = StreamWavState::ReadToData;
 
-                    // Move idx to after "fmt " chunk
                     let chunk_size = u32::from_le_bytes(
                         self.buffer[self.idx + 4..self.idx + 8].try_into().unwrap(),
                     ) as usize;
@@ -150,6 +153,12 @@ impl WavStreamProcessor {
                         }
                     }
 
+                    let chunk_size = u32::from_le_bytes(
+                        self.buffer[self.idx + 4..self.idx + 8].try_into().unwrap(),
+                    ) as usize;
+
+                    self.data_chunk_size = chunk_size;
+
                     self.state = StreamWavState::ReadingData;
                     // Skip "data" and size
                     self.buffer = self.buffer.split_off(self.idx + 8);
@@ -159,7 +168,7 @@ impl WavStreamProcessor {
                     let bytes_per_sample = (self.bits_per_sample / 8) as usize;
                     let bytes_per_frame = bytes_per_sample * self.channel_count as usize;
 
-                    if self.buffer.len() < bytes_per_sample * self.channel_count as usize {
+                    if self.buffer.len() < bytes_per_frame as usize {
                         return Ok(None); // Wait for more data
                     }
 
@@ -168,6 +177,11 @@ impl WavStreamProcessor {
 
                     let data_chunk = self.buffer[..len].to_vec();
                     self.buffer = self.buffer.split_off(len);
+
+                    self.data_chunk_collected += len;
+                    if self.data_chunk_collected == self.data_chunk_size {
+                        self.state = StreamWavState::Finished;
+                    }
 
                     let channels = deinterleave_vecs_f32(&data_chunk, self.channel_count);
 
@@ -266,9 +280,7 @@ mod tests {
             }
         }
 
-        // Perform your assertions or tests using the audio_packets vector
+        assert_eq!(&processor.data_chunk_size, &processor.data_chunk_collected);
         assert!(audio_packets.len() > 0, "No audio packets processed");
-
-        dbg!(&audio_packets[0]);
     }
 }

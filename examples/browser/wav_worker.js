@@ -10,17 +10,24 @@ async function init_wasm_in_worker() {
   await instance;
 
   const mod = WavToPcm.new();
-  const len = 128;
+  let len = null;
   let pcmBuf = null;
 
   self.onmessage = async (event) => {
     if (event.data.pcmSab) {
-      pcmBuf = ringbuffer(event.data.pcmSab, 128, 1024 * 4, Float32Array);
+      let opts = event.data;
+      len = opts.pcmBufOpts.size,
+      pcmBuf = ringbuffer(
+        opts.pcmSab,
+        opts.pcmBufOpts.size,
+        opts.pcmBufOpts.max,
+        Float32Array,
+      );
     } else {
       var byteArray = new Int8Array(event.data.buf);
       let audio = mod.add(byteArray);
-      console.log(audio);
       if (audio.ok && audio.channels) {
+        console.log(audio);
         let res = new Float32Array(len);
         let j = 0;
         for (let i = 0; i < audio.channels[0].length; i++) {

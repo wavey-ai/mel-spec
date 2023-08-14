@@ -10,10 +10,32 @@ const hopSize = 160;
 const samplingRate = 16000;
 const nMels = 80;
 
-const melSab = sharedbuffer(nMels, 64, Uint8ClampedArray);
-const melBuf = ringbuffer(melSab, nMels, 64, Uint8ClampedArray);
-const pcmSab = sharedbuffer(128, 1024 * 4, Float32Array);
-const pcmBuf = ringbuffer(pcmSab, 128, 1024 * 4, Float32Array);
+const melBufOpts = {
+  size: nMels,
+  max: 64,
+};
+
+const micBufOpts = {
+  size: 128,
+  max: 64,
+};
+
+const wavBufOpts = {
+  size: 160,
+  max: 50_000,
+};
+
+const melSab = sharedbuffer(melBufOpts.size, melBufOpts.max, Uint8ClampedArray);
+const melBuf = ringbuffer(
+  melSab,
+  melBufOpts.size,
+  melBufOpts.max,
+  Uint8ClampedArray
+);
+const micSab = sharedbuffer(micBufOpts.size, micBufOpts.max, Float32Array);
+const wavSab = sharedbuffer(wavBufOpts.size, wavBufOpts.max, Float32Array);
+
+let wav_worker;
 
 function convertToFloat(grayscaleValue) {
   return grayscaleValue / 255;
@@ -29,39 +51,51 @@ function colorizeGrayscaleValue(value, colormapName, reverse) {
 
 let addFrame;
 
-document.addEventListener("DOMContentLoaded", function () {
-  startWorker();
+document.addEventListener("DOMContentLoaded", async function () {
+  await startWorker();
+
   const form = document.getElementById("uploadForm");
   const fileInput = document.getElementById("waveFileInput");
 
   form.addEventListener("submit", async function (event) {
     event.preventDefault();
 
-    await wasm_bindgen_wav();
-
-    let worker = startup_wav("./wav_worker.js");
-
-   const file = fileInput.files[0];
+    const file = fileInput.files[0];
     if (!file) {
       alert("Please select a WAV file.");
       return;
     }
 
+    pcm_worker.postMessage({ pcmSab: wavSab, pcmBufOpts: wavBufOpts });
+    const CHUNK_SIZE = 1024 * 1024;
+    let offset = 0;
+
     const reader = new FileReader();
 
     reader.onload = function (event) {
-      const buf = event.target.result;
-      worker.postMessage({ buf });
+      const chunk = event.target.result;
+
+      if (chunk.byteLength > 0) {
+        wav_worker.postMessage({ buf: chunk });
+        offset += chunk.byteLength;
+        readNextChunk();
+      } else {
+        console.log("Finished reading file.");
+      }
     };
 
-   setTimeout(() => {
-      worker.postMessage({
-        pcmSab,
-      });
+    reader.onerror = function () {
+      console.error("Error reading file.");
+    };
 
-      reader.readAsArrayBuffer(file);
-    }, 500);
+    function readNextChunk() {
+      if (offset < file.size) {
+        const fileSlice = file.slice(offset, offset + CHUNK_SIZE);
+        reader.readAsArrayBuffer(fileSlice);
+      }
+    }
 
+    readNextChunk();
   });
 
   const canvas = document.getElementById("canvas"); // Replace 'canvas' with the ID of your canvas element
@@ -150,24 +184,30 @@ document.addEventListener("DOMContentLoaded", function () {
 
 async function startWorker() {
   await wasm_bindgen();
+  await wasm_bindgen_wav();
 
-  let worker = startup("./worker.js");
+  pcm_worker = startup("./worker.js");
+  wav_worker = startup_wav("./wav_worker.js");
 
   setTimeout(() => {
-    worker.postMessage({
-      options: {
-        fftSize,
-        hopSize,
-        samplingRate,
-        nMels,
-      },
+    wav_worker.postMessage({ pcmSab: wavSab, pcmBufOpts: wavBufOpts });
+    pcm_worker.postMessage({
+      fftSize,
+      hopSize,
+      samplingRate,
+      nMels,
       melSab,
-      pcmSab,
+      melBufOpts,
     });
   }, 500);
 
   const updateIntervalMs = 10;
-  function updateUI() {
+
+  const pop = () => {
+    pcm_worker.postMessage({ pop: true });
+  };
+
+  const updateUI = () => {
     let frames = [];
     while (true) {
       const mel = melBuf.pop();
@@ -178,13 +218,15 @@ async function startWorker() {
       let vad = !(mel && (mel[0] & 1) === 1);
       addFrame(mel, vad);
     }
-  }
+  };
+
   const updateIntervalId = setInterval(updateUI, updateIntervalMs);
+  const popIntervalId = setInterval(pop, updateIntervalMs);
 }
 
 async function startAudioProcessing(audioContext) {
   audioStream = await navigator.mediaDevices.getUserMedia({
-     audio: true,
+    audio: true,
   });
   const sourceSamplingRate = audioContext.sampleRate;
 
@@ -202,9 +244,12 @@ async function startAudioProcessing(audioContext) {
   volume.connect(audioNode);
   audioNode.connect(audioContext.destination);
 
+  pcm_worker.postMessage({ pcmSab: micSab, pcmBufOpts: micBufOpts });
+
   setTimeout(() => {
     audioNode.port.postMessage({
-      pcmSab,
+      pcmSab: micSab,
+      pcmBufOpts: micBufOpts,
     });
   }, 500);
 }

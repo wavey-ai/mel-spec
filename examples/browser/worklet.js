@@ -7,7 +7,13 @@ registerProcessor(
       super();
 
       this.port.onmessage = async (event) => {
-        buf = ringbuffer(event.data.pcmSab, 128, 64, Float32Array);
+        let opts = event.data;
+        buf = ringbuffer(
+          opts.pcmSab,
+          opts.pcmBufOpts.size,
+          opts.pcmBufOpts.max,
+          Float32Array,
+        );
       };
     }
 
