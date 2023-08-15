@@ -7,10 +7,37 @@
   <style>
     body {
        font-family: sans-serif;
+        background-color: #f4f4f5;
     }
     canvas {
       margin: 20px 0;
     }
+    ul#mels {
+      margin: 0;
+      padding: 0;
+      list-style-type: none;
+    }
+    #mels li {
+      list-style-type: none;
+      float: left;
+      margin-left: 5px
+    }
+    #mels span {
+      display: inline-block;
+      height: 40px;
+      min-width: 50px;
+      background-color: #fff;
+      color: white;
+      margin-left: 1px;
+    }
+    #mels img {
+      transition: transform 0.3s;
+      height: 40px;
+    }
+    #mels img:hover {
+      transform: scale(4);
+    }
+
   </style>
 </head>
 <body>
@@ -24,8 +51,11 @@
     </form>
     <button style="margin-left: 20px" id="startButton">Start Mic</button>
     </section>
-   <canvas id="canvas" height="150" width="1000"
-                style="background-color:#FFFFFF;">
+   <canvas id="canvas" height="120" width="1000"
+                style="background-color:#f4f4f5;">
+    </canvas>
+  <ul id="mels">
+  </ul>
 
   <script src="./js-colormaps.js"></script>
   <script src='./dist/mel_spec_pipeline.js'></script>

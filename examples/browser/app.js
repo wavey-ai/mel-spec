@@ -53,6 +53,7 @@ let addFrame;
 
 document.addEventListener("DOMContentLoaded", async function () {
   await startWorker();
+  startUi();
 
   const form = document.getElementById("uploadForm");
   const fileInput = document.getElementById("waveFileInput");
@@ -135,9 +136,9 @@ document.addEventListener("DOMContentLoaded", async function () {
 
           let [r, g, b] = [];
           if (vad) {
-            [r, g, b] = colorizeGrayscaleValue(val, "plasma", true);
+            [r, g, b] = colorizeGrayscaleValue(val, "plasma", false);
           } else {
-            [r, g, b] = colorizeGrayscaleValue(val, "cividis", true);
+            [r, g, b] = colorizeGrayscaleValue(val, "cividis", false);
           }
 
           arr[i * 4 + 0] = r; // R value
@@ -206,9 +207,100 @@ async function startWorker() {
   const pop = () => {
     pcm_worker.postMessage({ pop: true });
   };
+  const popIntervalId = setInterval(pop, updateIntervalMs);
+}
+
+function interleave(columns) {
+  const numRows = columns[0].length;
+  const numColumns = columns.length;
+  const interleavedArray = new Array(numRows * numColumns);
+
+  for (let row = 0; row < numRows; row++) {
+    for (let col = 0; col < numColumns; col++) {
+      interleavedArray[row * numColumns + col] = columns[col][row];
+    }
+  }
+
+  return interleavedArray;
+}
+
+function startUi() {
+  const updateIntervalMs = 10;
+
+  const melImages = [];
+  let segments = [];
+  let frames = [];
+  let vadCounter = 0; // Counter for contiguous !vad conditions
+  let vads = 0
+  const accumulateFrame = (mel, vad) => {
+    if (!vad) {
+      vadCounter++;
+      if (vadCounter >= 10 || segments.length >= 100) {
+        segments = segments.concat(frames);
+        if (segments.length >= 20 && vads >= segments.length / 2) {
+          newSegment(interleave(segments));
+        }
+        segments = [];
+        frames = [];
+        vadCounter = 0;
+        vads = 0;
+      } else if (segments.length > 0) {
+        frames.push(mel);
+      }
+    } else {
+      vadCounter = 0;
+      vads += 1;
+      frames.push(mel);
+      if (frames.length === 5) {
+        segments = segments.concat(frames);
+        frames = [];
+      }
+    }
+  };
+
+  const mels = document.getElementById("mels");
+
+  const newSegment = (frames) => {
+    const numColumns = frames.length / nMels;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const imageDataArr = new Uint8ClampedArray(nMels * 4 * numColumns);
+
+    for (let col = 0; col < numColumns; col++) {
+      for (let row = 0; row < nMels; row++) {
+        const dataIndex = row * numColumns + col;
+        const val = frames[dataIndex];
+        [r, g, b] = colorizeGrayscaleValue(val, "winter", false);
+        imageDataArr[(row * numColumns + col) * 4 + 0] = r; // R value
+        imageDataArr[(row * numColumns + col) * 4 + 1] = g; // G value
+        imageDataArr[(row * numColumns + col) * 4 + 2] = b; // B value
+        imageDataArr[(row * numColumns + col) * 4 + 3] = 255; // A value
+      }
+    }
+
+    const imageData = new ImageData(imageDataArr, numColumns, nMels);
+    canvas.width = numColumns;
+    canvas.height = nMels;
+    ctx.putImageData(imageData, 0, 0);
+
+    const imageURI = canvas.toDataURL();
+
+    const liElement = document.createElement("li");
+
+    const imgElement = document.createElement("img");
+    imgElement.src = imageURI;
+
+    const spanElement = document.createElement("span");
+    // You can add content to the span element here if needed
+
+    liElement.appendChild(imgElement);
+    liElement.appendChild(spanElement);
+
+    mels.appendChild(liElement);
+  };
 
   const updateUI = () => {
-    let frames = [];
     while (true) {
       const mel = melBuf.pop();
       if (!mel) {
@@ -216,12 +308,13 @@ async function startWorker() {
       }
 
       let vad = !(mel && (mel[0] & 1) === 1);
+      mel.reverse();
       addFrame(mel, vad);
+      accumulateFrame(mel, vad);
     }
   };
 
   const updateIntervalId = setInterval(updateUI, updateIntervalMs);
-  const popIntervalId = setInterval(pop, updateIntervalMs);
 }
 
 async function startAudioProcessing(audioContext) {
