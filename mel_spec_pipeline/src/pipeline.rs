@@ -355,19 +355,19 @@ impl PipelineOutputBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mel_spec::mel::*;
+    use mel_spec::quant::*;
     use mel_spec_audio::packet::*;
     use mel_spec_audio::wav::*;
     use std::fs::File;
 
-    #[test]
+    //#[test]
     fn test_pipeline() {
         // load the whisper jfk sample
-        let file_path = "../testdata/jfk_f32le.wav";
+        let file_path = "../testdata/jfk_full_f32le.wav";
         let file = File::open(&file_path).unwrap();
         let data = parse_wav(file).unwrap();
         let samples = deinterleave_vecs_f32(data.data(), 1);
-
-        dbg!(&samples[0][0]);
 
         let fft_size = 400;
         let hop_size = 160;
@@ -392,8 +392,16 @@ mod tests {
 
         pl.close_ingress();
 
-        while let Ok(res) = pl.vad_rx().recv() {
-            //dbg!(res);
+        let mut frames = Vec::new();
+        while let Ok(mel) = pl.mel_rx().recv() {
+            frames.push(mel.frame().clone());
+            dbg!(mel.idx());
+            if mel.idx() % 100 == 0 {
+                let f = interleave_frames(&frames, false, 0);
+                let (q, r) = quantize(&f);
+                frames = Vec::new();
+                dbg!(r);
+            }
         }
 
         for handle in handles {

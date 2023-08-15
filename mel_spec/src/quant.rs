@@ -63,30 +63,37 @@ fn tga_8bit_data(data: &[f32], n_mels: usize) -> Vec<u8> {
     tga_image
 }
 
-/// Load a TARGA file from disk, returning the interleaved frame data.
-pub fn load_tga_8bit(path: &str) -> io::Result<Vec<f32>> {
-    let mut file = File::open(path)?;
+pub fn parse_tga_8bit(data: &[u8]) -> io::Result<Vec<f32>> {
+    let mut cursor = io::Cursor::new(data);
     let mut tga_data = Vec::new();
     let mut min_bytes = [0u8; 4];
     let mut max_bytes = [0u8; 4];
 
-    // discard TGA header
-    file.read_exact(&mut [0; 18])?;
+    // Discard TGA header (18 bytes)
+    cursor.set_position(18);
 
-    file.read_exact(&mut min_bytes)?;
-    file.read_exact(&mut max_bytes)?;
+    cursor.read_exact(&mut min_bytes)?;
+    cursor.read_exact(&mut max_bytes)?;
 
     let min = f32::from_le_bytes(min_bytes);
     let max = f32::from_le_bytes(max_bytes);
 
     let range = QuantizationRange { min, max };
 
-    // Read the rest of the file (image data) into the tga_data vector
-    file.read_to_end(&mut tga_data)?;
+    cursor.read_to_end(&mut tga_data)?;
 
     let mel = dequantize(&tga_data, &range);
 
     Ok(mel)
+}
+
+/// Load a TARGA file from disk, returning the interleaved frame data.
+pub fn load_tga_8bit(path: &str) -> io::Result<Vec<f32>> {
+    let mut file = File::open(path)?;
+    let mut tga_data = Vec::new();
+    file.read_to_end(&mut tga_data)?;
+
+    parse_tga_8bit(&tga_data)
 }
 
 /// Utility function to chunk a major row-order interleaved spectrogram

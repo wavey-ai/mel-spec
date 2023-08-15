@@ -92,7 +92,7 @@ impl VoiceActivityDetector {
     }
 
     /// Add Mel spectrogram - should be a single frame.
-    pub fn add(&mut self, frame: &Array2<f64>) -> Option<(bool)> {
+    pub fn add(&mut self, frame: &Array2<f64>) -> Option<bool> {
         let min_x = self.settings.min_x;
         if self.idx == 128 {
             self.mel_buffer = self.mel_buffer[(self.mel_buffer.len() - min_x)..].to_vec();
@@ -431,6 +431,8 @@ mod tests {
         let start = std::time::Instant::now();
         let file_path = "../testdata/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
+        dbg!(&dequantized_mel);
+
         let frames = to_array2(&dequantized_mel, n_mels);
 
         let edge_info = vad_boundaries(&[frames.clone()], &settings);

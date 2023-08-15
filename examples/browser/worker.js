@@ -45,9 +45,14 @@ async function init_wasm_in_worker() {
         if (samples) {
           const res = mod.add(samples);
           if (res.ok) {
-            let f = res.frame;
-            f[0] = res.va ? f[0] & ~1 : f[0] | 1;
-            melBuf.push(f);
+            const data = new Uint8ClampedArray(res.frame.length + 8);
+            data.set(res.frame);
+            const float1Bytes = new Uint8Array(new Float32Array([res.min]).buffer);
+            const float2Bytes = new Uint8Array(new Float32Array([res.max]).buffer);
+            data.set(float1Bytes, 80);
+            data.set(float2Bytes, 84);
+            data[0] = res.va ? data[0] & ~1 : data[0] | 1;
+            melBuf.push(data);
           }
         } else {
           break;

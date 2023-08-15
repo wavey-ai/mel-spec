@@ -106,10 +106,9 @@ pub fn interleave_frames(
 
     // Determine the required padding
     let padding = min_width.saturating_sub(combined_width);
-    let padded_width = combined_width + padding;
 
     // Create a new Array2 with the required padding
-    let padded_frame = Array2::from_shape_fn((num_filters, padded_width), |(_, _)| 0.0);
+    let padded_frame = Array2::from_shape_fn((num_filters, padding), |(_, _)| 0.0);
 
     // Insert the padded frame to the end of the frames array if padding is needed
     let mut frames_with_padding = frames.to_vec();
@@ -118,7 +117,7 @@ pub fn interleave_frames(
         num_frames += 1;
     }
 
-    let mut interleaved_data = Vec::with_capacity(num_frames * num_filters * padded_width);
+    let mut interleaved_data = Vec::with_capacity(num_frames * num_filters * padding);
 
     if major_column_order {
         for frame_idx in 0..num_frames {

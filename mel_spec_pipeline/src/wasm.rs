@@ -68,13 +68,26 @@ impl SpeechToMel {
             .unwrap();
 
             if let Some(fft) = self.fft.add(&samples.to_vec()) {
-                let frame = norm_mel(&log_mel_spectrogram(&fft, &self.mel));
+                //let frame = norm_mel(&log_mel_spectrogram(&fft, &self.mel));
+                let frame = &log_mel_spectrogram(&fft, &self.mel);
                 let frame2 = norm_mel(&log_mel_spectrogram(&fft, &self.mel_vad));
-                let (quant_frame, _) = quantize(&interleave_frames(&[frame.clone()], false, 0));
+                let (quant_frame, range) = quantize(&interleave_frames(&[frame.clone()], false, 0));
                 let frame_array = Uint8Array::from(&quant_frame[..]);
                 let frame_clamped_array = Uint8ClampedArray::new(&frame_array.buffer());
                 Reflect::set(&result, &JsValue::from_str("frame"), &frame_clamped_array).unwrap();
                 Reflect::set(&result, &JsValue::from_str("ok"), &JsValue::from(true)).unwrap();
+                Reflect::set(
+                    &result,
+                    &JsValue::from_str("min"),
+                    &JsValue::from(range.min),
+                )
+                .unwrap();
+                Reflect::set(
+                    &result,
+                    &JsValue::from_str("max"),
+                    &JsValue::from(range.max),
+                )
+                .unwrap();
                 if let Some(gap) = self.vad.add(&frame2) {
                     let ms = duration_ms_for_n_frames(self.hop_size, self.sampling_rate, self.idx);
                     Reflect::set(&result, &JsValue::from_str("idx"), &JsValue::from(self.idx))
