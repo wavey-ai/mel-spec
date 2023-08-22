@@ -1,4 +1,3 @@
-use crate::utils::downscale_frames;
 use image::{ImageBuffer, Rgb};
 use ndarray::{concatenate, s, Array, Array2, Axis};
 use std::collections::HashSet;
@@ -36,7 +35,7 @@ pub struct DetectionSettings {
 ///  `min_frames`: the min frames to accumulate before looking for a
 ///  boundary to split at. This should be at least 50-100. (100 frames is
 ///  1 second using Whisper FFT settings).
-///  
+///
 /// See `doc/jfk_vad_boundaries.png` for a visualisation.
 impl DetectionSettings {
     pub fn new(min_energy: f64, min_y: usize, min_x: usize, min_mel: usize) -> Self {
@@ -337,7 +336,6 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
 mod tests {
     use super::*;
     use crate::quant::{dequantize, load_tga_8bit, quantize, to_array2};
-    use fast_image_resize as fr;
     use std::num::NonZeroU32;
 
     //#[test]
