@@ -4,9 +4,6 @@ members = [
   "mel_spec",
   "mel_spec_pipeline",
   "mel_spec_audio",
-  "examples/mel_tga",
-  "examples/tga_whisper",
-  "examples/stream_whisper",
 ]
 
 
