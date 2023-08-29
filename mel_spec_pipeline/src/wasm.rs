@@ -49,7 +49,7 @@ impl SpeechToMel {
     #[wasm_bindgen]
     pub fn get(&mut self) -> JsValue {
         let empty = vec![0.0; 0];
-        self.add(empty)
+        self.add(empty, false)
     }
 
     #[wasm_bindgen]
