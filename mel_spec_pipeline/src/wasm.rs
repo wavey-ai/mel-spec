@@ -53,7 +53,7 @@ impl SpeechToMel {
     }
 
     #[wasm_bindgen]
-    pub fn add(&mut self, data: Vec<f32>) -> JsValue {
+    pub fn add(&mut self, data: Vec<f32>, vad: bool) -> JsValue {
         let result = Object::new();
         Reflect::set(&result, &JsValue::from_str("ok"), &JsValue::from(false)).unwrap();
         self.accumulated_samples.extend_from_slice(&data);
@@ -88,12 +88,14 @@ impl SpeechToMel {
                     &JsValue::from(range.max),
                 )
                 .unwrap();
-                if let Some(gap) = self.vad.add(&frame2) {
-                    let ms = duration_ms_for_n_frames(self.hop_size, self.sampling_rate, self.idx);
-                    Reflect::set(&result, &JsValue::from_str("idx"), &JsValue::from(self.idx))
-                        .unwrap();
-                    Reflect::set(&result, &JsValue::from_str("ms"), &JsValue::from(ms)).unwrap();
-                    Reflect::set(&result, &JsValue::from_str("va"), &JsValue::from(gap)).unwrap();
+                let ms = duration_ms_for_n_frames(self.hop_size, self.sampling_rate, self.idx);
+                Reflect::set(&result, &JsValue::from_str("idx"), &JsValue::from(self.idx)).unwrap();
+                Reflect::set(&result, &JsValue::from_str("ms"), &JsValue::from(ms)).unwrap();
+                if vad {
+                    if let Some(gap) = self.vad.add(&frame2) {
+                        Reflect::set(&result, &JsValue::from_str("va"), &JsValue::from(gap))
+                            .unwrap();
+                    }
                 }
             }
             self.accumulated_samples = rest.to_vec();
