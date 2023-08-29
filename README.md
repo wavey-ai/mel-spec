@@ -6,6 +6,8 @@ streaming audio.
 
 ## Examples:
 
+See [wavey-ai/hush](https://github.com/wavey-ai/hush) for live demo
+
 ![image](doc/browser.png)
 * [stream microphone or wav to mel wasm worker](examples/browser)
 * [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
