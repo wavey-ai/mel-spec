@@ -13,8 +13,7 @@ js-sys = "0.3.64"
 ndarray = "0.15.6"
 ndarray-npy = "0.8.1"
 num = "0.4.1"
-rustfft = "6.1.0"
+rustfft = { path = "../../RustFFT", features = ["wasm_simd"]}
 
-[target.aarch64-apple-darwin]
-rustflags = "-lc++ -l framework=Accelerate"
-
+[lib]
+crate-type = ["cdylib", "rlib"]
