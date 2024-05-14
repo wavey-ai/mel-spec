@@ -146,11 +146,11 @@ pub fn interleave_frames(
 }
 
 /// Mel filterbanks, within 1.0e-7 of librosa and identical to whisper GGML model-embedded filters.
-pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array2<f64> {
+pub fn mel(sr: f64, n_fft: usize, n_mels: usize, f_min: Option<f64>, f_max: Option<f64>, htk: bool, norm: bool) -> Array2<f64> {
     let fftfreqs = fft_frequencies(sr, n_fft);
-    let f_min: f64 = 0.0; // Minimum frequency
-    let f_max: f64 = sr / 2.0; // Maximum frequency
-    let mel_f = mel_frequencies(n_mels + 2, f_min, f_max, hkt);
+    let f_min: f64 = f_min.unwrap_or(0.0); // Minimum frequency
+    let f_max: f64 = f_max.unwrap_or(sr / 2.0); // Maximum frequency
+    let mel_f = mel_frequencies(n_mels + 2, f_min, f_max, htk);
 
     // calculate the triangular mel filter bank weights for mel-frequency cepstral coefficient (MFCC) computation
     let fdiff = &mel_f.slice(s![1..n_mels + 2]) - &mel_f.slice(s![..n_mels + 1]);
@@ -184,7 +184,7 @@ pub fn mel(sr: f64, n_fft: usize, n_mels: usize, hkt: bool, norm: bool) -> Array
 
 pub fn hz_to_mel(frequency: f64, htk: bool) -> f64 {
     if htk {
-        return 2595.0 * (1.0 + (frequency / 700.0).log10());
+        return 2595.0 * (1.0 + frequency / 700.0).log10();
     }
 
     let f_min: f64 = 0.0;
@@ -322,7 +322,7 @@ mod tests {
         let mut npz = NpzReader::new(f).unwrap();
         let filters: Array2<f32> = npz.by_index(0).unwrap();
         let want: Array2<f64> = filters.mapv(|x| f64::from(x));
-        let got = mel(16000.0, 400, 80, false, true);
+        let got = mel(16000.0, 400, 80, None, None, false, true);
         assert_eq!(got.shape(), vec![80, 201]);
         for i in 0..80 {
             assert_nearby!(got.row(i), want.row(i), 1.0e-7);
