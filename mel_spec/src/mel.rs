@@ -1,7 +1,7 @@
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
 
-/// MelSpectrogram applies a pre-computed filerbank to an FFT result.
+/// MelSpectrogram applies a pre-computed filterbank to an FFT result.
 /// Results are identical to whisper.cpp and whisper.py
 pub struct MelSpectrogram {
     filters: Array2<f64>,
@@ -9,7 +9,7 @@ pub struct MelSpectrogram {
 
 impl MelSpectrogram {
     pub fn new(fft_size: usize, sampling_rate: f64, n_mels: usize) -> Self {
-        let filters = mel(sampling_rate, fft_size, n_mels, false, true);
+        let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
         Self { filters }
     }
 
@@ -21,7 +21,7 @@ impl MelSpectrogram {
 }
 
 /// Normalisation is a separate step, see [`norm_mel`].
-/// The nomralised `Array2` output must be processed with [`interleave_frames`]
+/// The normalised `Array2` output must be processed with [`interleave_frames`]
 /// before sending to whisper.cpp
 pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
     let mut magnitudes_padded = stft
@@ -70,7 +70,7 @@ pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
     clamped
 }
 
-/// Interleave a mel spectogram
+/// Interleave a mel spectrogram
 ///
 /// Required for creating images or passing to `whisper.cpp`
 ///
@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fft_frequences() {
+    fn test_fft_frequencies() {
         let sr = 22050.0;
         let n_fft = 16;
 

@@ -12,13 +12,13 @@ See [wavey-ai/hush](https://github.com/wavey-ai/hush) for live demo
 * [stream microphone or wav to mel wasm worker](examples/browser)
 * [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
 * [convert audio to mel spectrograms and save to image](examples/mel_tga)
-* [trasnscribe images with whisper.cpp](examples/tga_whisper)
+* [transcribe images with whisper.cpp](examples/tga_whisper)
 
 ## Usage
 
 To require the libary's main features:
 
-``` rust
+```rust
 use mel_spec::prelude::*
 ```
 
@@ -26,26 +26,28 @@ use mel_spec::prelude::*
 
 Mel filterbanks, within 1.0e-7 of librosa and identical to whisper
 GGML model-embedded filters.
- 
-``` rust
-        let file_path = "./testdata/mel_filters.npz";
-        let f = File::open(file_path).unwrap();
-        let mut npz = NpzReader::new(f).unwrap();
-        let filters: Array2<f32> = npz.by_index(0).unwrap();
-        let want: Array2<f64> = filters.mapv(|x| f64::from(x));
-        let sampling_rate = 16000.0;
-        let fft_size = 400;
-        let n_mels = 80;
-        let hkt = false;
-        let norm = true;
-        let got = mel(sampling_rate, fft_size, n_mels, hkt, norm);
-        assert_eq!(got.shape(), vec![80, 201]);
-        for i in 0..80 {
-            assert_nearby!(got.row(i), want.row(i), 1.0e-7);
-        }
+
+```rust
+    let file_path = "./testdata/mel_filters.npz";
+    let f = File::open(file_path).unwrap();
+    let mut npz = NpzReader::new(f).unwrap();
+    let filters: Array2<f32> = npz.by_index(0).unwrap();
+    let want: Array2<f64> = filters.mapv(|x| f64::from(x));
+    let sampling_rate = 16000.0;
+    let fft_size = 400;
+    let n_mels = 80;
+    let f_min = None;
+    let f_max = None;
+    let hkt = false;
+    let norm = true;
+    let got = mel(sampling_rate, fft_size, n_mels, f_min, f_max, hkt, norm);
+    assert_eq!(got.shape(), vec![80, 201]);
+    for i in 0..80 {
+        assert_nearby!(got.row(i), want.row(i), 1.0e-7);
+    }
 ```
 
-### Spectrogam using Short Time Fourier Transform
+### Spectrogram using Short Time Fourier Transform
 
 STFT with overlap-and-save that has parity with pytorch and
 whisper.cpp.
@@ -54,75 +56,75 @@ The implementation is suitable for processing streaming audio and
 will accumulate the correct amount of data before returning fft
 results.
 
-``` rust
-        let fft_size = 8;
-        let hop_size = 4;
-        let mut spectrogram = Spectrogram::new(fft_size, hop_size);
+```rust
+    let fft_size = 8;
+    let hop_size = 4;
+    let mut spectrogram = Spectrogram::new(fft_size, hop_size);
 
-        // Add PCM audio samples
-        let frames: Vec<f32> = vec![1.0, 2.0, 3.0];
-        if let Some(fft_frame) = spectrogram.add(&frames) {
-            // use fft result
-        }  
+    // Add PCM audio samples
+    let frames: Vec<f32> = vec![1.0, 2.0, 3.0];
+    if let Some(fft_frame) = spectrogram.add(&frames) {
+        // use fft result
+    }
 ```
 
-### STFT Spectrogam to Mel Spectrogram
+### STFT Spectrogram to Mel Spectrogram
 
-MelSpectrogram applies a pre-computed filerbank to an FFT result.
+MelSpectrogram applies a pre-computed filterbank to an FFT result.
 Results are identical to whisper.cpp and whisper.py
 
-``` rust
-        let fft_size = 400;
-        let sampling_rate = 16000.0;
-        let n_mels = 80;
-        let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
-        // Example input data for the FFT
-        let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
-        // Add the FFT data to the MelSpectrogram
-        let mel_spec = stage.add(fft_input);
+```rust
+    let fft_size = 400;
+    let sampling_rate = 16000.0;
+    let n_mels = 80;
+    let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
+    // Example input data for the FFT
+    let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
+    // Add the FFT data to the MelSpectrogram
+    let mel_spec = stage.add(fft_input);
 ```
 
 ### Creating Mel Spectrograms from Audio.
 
-The library includes basic audio helpder and a pipeline for processing
+The library includes basic audio helper and a pipeline for processing
 PCM audio and creating Mel spectrograms that can be sent to whisper.cpp.
 
 It also has voice activity detection that uses edge detection (which
 might be a novel approach) to identify word/speech boundaries in real-
 time.
 
-``` rust
-        // load the whisper jfk sample
-        let file_path = "../testdata/jfk_f32le.wav";
-        let file = File::open(&file_path).unwrap();
-        let data = parse_wav(file).unwrap();
-        let samples = deinterleave_vecs_f32(&data.data, 1);
+```rust
+    // load the whisper jfk sample
+    let file_path = "../testdata/jfk_f32le.wav";
+    let file = File::open(&file_path).unwrap();
+    let data = parse_wav(file).unwrap();
+    let samples = deinterleave_vecs_f32(&data.data, 1);
 
-        let fft_size = 400;
-        let hop_size = 160;
-        let n_mels = 80;
-        let sampling_rate = 16000.0;
+    let fft_size = 400;
+    let hop_size = 160;
+    let n_mels = 80;
+    let sampling_rate = 16000.0;
 
-        let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-        let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
+    let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
+    let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
 
-        let config = PipelineConfig::new(mel_settings, Some(vad_settings));
+    let config = PipelineConfig::new(mel_settings, Some(vad_settings));
 
-        let mut pl = Pipeline::new(config);
+    let mut pl = Pipeline::new(config);
 
-        let handles = pl.start();
+    let handles = pl.start();
 
-        // chunk size can be anything, 88 is random
-        for chunk in samples[0].chunks(88) {
-            let _ = pl.send_pcm(chunk);
-        }
+    // chunk size can be anything, 88 is random
+    for chunk in samples[0].chunks(88) {
+        let _ = pl.send_pcm(chunk);
+    }
 
-        pl.close_ingress();
+    pl.close_ingress();
 
-        while let Ok((_, mel_spectrogram)) = pl.rx().recv() {
-          // do something with spectrogram
-        }
-```        
+    while let Ok((_, mel_spectrogram)) = pl.rx().recv() {
+      // do something with spectrogram
+    }
+```
 
 ### Saving Mel Spectrograms to file
 
@@ -141,7 +143,7 @@ Note that spectrograms must have an even number of columns in the time domain,
 otherwise Whisper will hallucinate. the library takes care of this if using the
 core methods.
 
-``` rust
+```rust
      let file_path = "../testdata/jfk_full_speech_chunk0_golden.tga";
      let dequantized_mel = load_tga_8bit(file_path).unwrap();
      // dequantized_mel can be sent straight to whisper.cpp
@@ -158,7 +160,6 @@ Got 1
 ![image](doc/cutsec_46997.png)
 _the quest for peace._
 
-
 ### Voice Activity Detection
 
 I had the idea of using the Sobel operator for this as speech in Mel spectrograms
@@ -168,14 +169,14 @@ The general idea is to outline structure in the spectrogram and then find vertic
 gaps that are suitable for cutting - to allow passing new spectrograms to the model
 in near real-time.
 
-It's particualrly good at separating speech activity - this is important, because
+It's particularly good at separating speech activity - this is important, because
 anything resembling white noise is hallucinogenic to Whisper. The Voice Activity
 Detector module therefore drops frames that look to be gaps in speech.
 
 This is still not perfect and definitely a downside of stream processing, at least
 with Whisper. However, pre-processing audio as spectrograms should be more robust
 than pre-processing raw audio - with raw audio it's necessary to look for attack
-transients to find boundaries, but it's not easy to tell if enegry changes are
+transients to find boundaries, but it's not easy to tell if energy changes are
 voice or something else. Mel spectrograms already provide a distinctive "voice"
 signature.
 
@@ -184,26 +185,26 @@ possible word/speech boundaries. As you can see, it works pretty well:
 
 ![image](doc/jfk_vad_example.png)
 
-For reference, the settings used for this example are: 
+For reference, the settings used for this example are:
 
-``` rust
-        let settings = DetectionSettings {
-            min_energy: 1.0,
-            min_y: 3,
-            min_x: 5,
-            min_mel: 0,
-            min_frames: 100,
-        };
+```rust
+    let settings = DetectionSettings {
+        min_energy: 1.0,
+        min_y: 3,
+        min_x: 5,
+        min_mel: 0,
+        min_frames: 100,
+    };
 ```
 
-Voice boundares for the entire inaugural address can be found in:
+Voice boundaries for the entire inaugural address can be found in:
 `testdata/jfk_full_speech_chunk0_golden.tga`.
 
 It does a good job of detecting when a window contains no speech, vs when it
 contains very short expressions - green means no speech detected - green as
 it means it's safe to cut without cutting a word in half.
 
-A segment in the JFK speech that's noisy and somewhat strucutured - but not
+A segment in the JFK speech that's noisy and somewhat structured - but not
 speech (I picked these by finding the most wild hallucinations in the
 transcript):
 
@@ -239,8 +240,8 @@ saved - see `examples`).
 
 * Mel spectrograms encode at 6.4Kb /sec (80 * 2 bytes * 40 frames)
 * Float PCM required by whispser audio APIs is 64Kb /sec at 16Khz
-    - expensive to reprocess
-    - resource intensive to keep PCM in-band for overlapping
+  - expensive to reprocess
+  - resource intensive to keep PCM in-band for overlapping
 
 whisper.cpp produces mel spectrograms with 1.0e-6 precision. However,
 these spectrograms are invariant to 8-bit quantisation: we can save them
@@ -249,7 +250,7 @@ information about the sound wave at all.
 
 Heisenberg's Uncertainty Principle puts a limit on how much resolution a
 spectrogram can have - the more we zoom in on a wave, the more blurry it
-becomes. 
+becomes.
 
 Time stretching by overlapping (whisper uses a 60% overlap) mitigates this,
 to a point. But after that more precision doesn't mean more accuracy,
@@ -258,36 +259,36 @@ and may actually cause noise:
 Indeed, *we only need 1.0e-1 precision to get accurate results*, and
 rounding to 1.0e-1 seems more accurate for some difficult transcriptions.
 
-
 Consider these samples from the jfk speech used in the original whisper.py
 tests:
 
 ```
 [src/lib.rs:93] &mel_spectrogram[10..20] = [
-    0.15811597,
-    0.26561865,
-    0.07558561,
-    0.19564378,
-    0.16745868,
-    0.21617787,
-    -0.29193184,
-    0.12279237,
-    0.13897367,
-    -0.17434756,
+    0.15811597,
+    0.26561865,
+    0.07558561,
+    0.19564378,
+    0.16745868,
+    0.21617787,
+    -0.29193184,
+    0.12279237,
+    0.13897367,
+    -0.17434756,
 ]
 ```
+
 ```
 [src/lib.rs:92] &mel_spectrogram_rounded[10..20] = [
-    0.2,
-    0.3,
-    0.1,
-    0.2,
-    0.2,
-    0.2,
-    -0.3,
-    0.1,
-    0.1,
-    -0.2,
+    0.2,
+    0.3,
+    0.1,
+    0.2,
+    0.2,
+    0.2,
+    -0.3,
+    0.1,
+    0.1,
+    -0.2,
 ]
 ```
 
@@ -298,7 +299,7 @@ Once quantised, the spectrograms are the same:
 (top: not rounded, botton: rounded to 1.0e-1)
 
 A lot has to do with how speech can be encapsulated almost entirely in
-the frequency domain, and how effectively the mel scale divides those 
+the frequency domain, and how effectively the mel scale divides those
 frequencies into 80 bins. 8-bytes of 0-255 grayscale is probably
 overkill even to measure the total power in each of those bins - it
 could be compressed even further.

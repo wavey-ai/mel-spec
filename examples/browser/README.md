@@ -5,6 +5,6 @@ and share mel spectrogram frames with the main ui thread via a Shared Array Buff
 
 It renders in real-time on an M2 Air.
 
-```
+```sh
 npm start
 ```
