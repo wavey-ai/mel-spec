@@ -17,25 +17,27 @@ use mel_spec::prelude::*
 Mel filterbanks, within 1.0e-7 of librosa and identical to whisper
 GGML model-embedded filters.
 
-```
-        let file_path = "./testdata/mel_filters.npz";
-        let f = File::open(file_path).unwrap();
-        let mut npz = NpzReader::new(f).unwrap();
-        let filters: Array2<f32> = npz.by_index(0).unwrap();
-        let want: Array2<f64> = filters.mapv(|x| f64::from(x));
-        let sampling_rate = 16000.0;
-        let fft_size = 400;
-        let n_mels = 80;
-        let hkt = false;
-        let norm = true;
-        let got = mel(sampling_rate, fft_size, n_mels, hkt, norm);
-        assert_eq!(got.shape(), vec![80, 201]);
-        for i in 0..80 {
-            assert_nearby!(got.row(i), want.row(i), 1.0e-7);
-        }
+```rust
+    let file_path = "./testdata/mel_filters.npz";
+    let f = File::open(file_path).unwrap();
+    let mut npz = NpzReader::new(f).unwrap();
+    let filters: Array2<f32> = npz.by_index(0).unwrap();
+    let want: Array2<f64> = filters.mapv(|x| f64::from(x));
+    let sampling_rate = 16000.0;
+    let fft_size = 400;
+    let n_mels = 80;
+    let f_min = None;
+    let f_max = None;
+    let hkt = false;
+    let norm = true;
+    let got = mel(sampling_rate, fft_size, n_mels, f_min, f_max, hkt, norm);
+    assert_eq!(got.shape(), vec![80, 201]);
+    for i in 0..80 {
+        assert_nearby!(got.row(i), want.row(i), 1.0e-7);
+    }
 ```
 
-### Spectrogam using Short Time Fourier Transform
+### Spectrogram using Short Time Fourier Transform
 
 STFT with overlap-and-save that has parity with pytorch and
 whisper.cpp.
@@ -44,74 +46,74 @@ The implementation is suitable for processing streaming audio and
 will accumulate the correct amount of data before returning fft
 results.
 
+```rust
+    let fft_size = 8;
+    let hop_size = 4;
+    let mut spectrogram = Spectrogram::new(fft_size, hop_size);
+
+    // Add PCM audio samples
+    let frames: Vec<f32> = vec![1.0, 2.0, 3.0];
+    if let Some(fft_frame) = spectrogram.add(&frames) {
+        // use fft result
+    }
 ```
-        let fft_size = 8;
-        let hop_size = 4;
-        let mut spectrogram = Spectrogram::new(fft_size, hop_size);
 
-        // Add PCM audio samples
-        let frames: Vec<f32> = vec![1.0, 2.0, 3.0];
-        if let Some(fft_frame) = spectrogram.add(&frames) {
-            // use fft result
-        }
-```
+### STFT Spectrogram to Mel Spectrogram
 
-### STFT Spectrogam to Mel Spectrogram
-
-MelSpectrogram applies a pre-computed filerbank to an FFT result.
+MelSpectrogram applies a pre-computed filterbank to an FFT result.
 Results are identical to whisper.cpp and whisper.py
 
-```
-        let fft_size = 400;
-        let sampling_rate = 16000.0;
-        let n_mels = 80;
-        let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
-        // Example input data for the FFT
-        let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
-        // Add the FFT data to the MelSpectrogram
-        let mel_spec = stage.add(fft_input);
+```rust
+    let fft_size = 400;
+    let sampling_rate = 16000.0;
+    let n_mels = 80;
+    let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
+    // Example input data for the FFT
+    let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
+    // Add the FFT data to the MelSpectrogram
+    let mel_spec = stage.add(fft_input);
 ```
 
 ### Creating Mel Spectrograms from Audio.
 
-The library includes basic audio helpder and a pipeline for processing
+The library includes basic audio helper and a pipeline for processing
 PCM audio and creating Mel spectrograms that can be sent to whisper.cpp.
 
 It also has voice activity detection that uses edge detection (which
 might be a novel approach) to identify word/speech boundaries in real-
 time.
 
-```
-        // load the whisper jfk sample
-        let file_path = "../testdata/jfk_f32le.wav";
-        let file = File::open(&file_path).unwrap();
-        let data = parse_wav(file).unwrap();
-        let samples = deinterleave_vecs_f32(&data.data, 1);
+```rust
+    // load the whisper jfk sample
+    let file_path = "../testdata/jfk_f32le.wav";
+    let file = File::open(&file_path).unwrap();
+    let data = parse_wav(file).unwrap();
+    let samples = deinterleave_vecs_f32(&data.data, 1);
 
-        let fft_size = 400;
-        let hop_size = 160;
-        let n_mels = 80;
-        let sampling_rate = 16000.0;
+    let fft_size = 400;
+    let hop_size = 160;
+    let n_mels = 80;
+    let sampling_rate = 16000.0;
 
-        let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-        let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
+    let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
+    let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
 
-        let config = PipelineConfig::new(mel_settings, Some(vad_settings));
+    let config = PipelineConfig::new(mel_settings, Some(vad_settings));
 
-        let mut pl = Pipeline::new(config);
+    let mut pl = Pipeline::new(config);
 
-        let handles = pl.start();
+    let handles = pl.start();
 
-        // chunk size can be anything, 88 is random
-        for chunk in samples[0].chunks(88) {
-            let _ = pl.send_pcm(chunk);
-        }
+    // chunk size can be anything, 88 is random
+    for chunk in samples[0].chunks(88) {
+        let _ = pl.send_pcm(chunk);
+    }
 
-        pl.close_ingress();
+    pl.close_ingress();
 
-        while let Ok((_, mel_spectrogram)) = pl.rx().recv() {
-          // do something with spectrogram
-        }
+    while let Ok((_, mel_spectrogram)) = pl.rx().recv() {
+      // do something with spectrogram
+    }
 ```
 
 ### Saving Mel Spectrograms to file

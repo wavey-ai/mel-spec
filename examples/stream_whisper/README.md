@@ -2,13 +2,13 @@
 
 Pipe in audio from file:
 
-```
+```sh
 ffmpeg -hide_banner -loglevel error -i ../../testdata/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/stream_whisper
 ```
 
 or microphone:
 
-```
+```sh
 ffmpeg -hide_banner -loglevel error -f avfoundation -i ":1" -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1 | ./target/debug/stream_whisper
 ```
 

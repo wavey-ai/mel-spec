@@ -3,7 +3,7 @@
 These spectrograms are like a photographic negative as far as Whisper is
 concerned, they can be saved, spliced and played back by whisper.cpp.
 
-```
+```sh
 cargo build && ffmpeg -hide_banner -loglevel error -i ../../testdata/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/mel_tga
 ```
 

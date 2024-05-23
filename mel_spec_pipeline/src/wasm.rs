@@ -23,8 +23,8 @@ pub struct SpeechToMel {
 impl SpeechToMel {
     #[wasm_bindgen]
     pub fn new(fft_size: usize, hop_size: usize, sampling_rate: f64, n_mels: usize) -> Self {
-        let filters = mel(sampling_rate, fft_size, n_mels, false, true);
-        let filters2 = mel(sampling_rate, fft_size, n_mels / 4, false, true);
+        let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
+        let filters2 = mel(sampling_rate, fft_size, n_mels / 4, None, None, false, true);
         let stft = Spectrogram::new(fft_size, hop_size);
         let settings = DetectionSettings {
             min_energy: 1.0,
