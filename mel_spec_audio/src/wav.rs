@@ -1,6 +1,5 @@
 use crate::packet::deinterleave_vecs_f32;
-use std::convert::TryInto;
-use std::io::{Error, Read};
+use std::io::Read;
 
 #[derive(Debug)]
 pub struct AudioFileData {

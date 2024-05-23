@@ -1,10 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-  "mel_spec",
-  "mel_spec_pipeline",
-  "mel_spec_audio",
-]
+members = ["mel_spec", "mel_spec_pipeline", "mel_spec_audio"]
 
 
 [workspace.package]

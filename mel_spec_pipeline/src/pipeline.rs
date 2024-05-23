@@ -181,7 +181,7 @@ impl Pipeline {
 
             while let Ok((idx, fft)) = mel_stt_rx.recv() {
                 let spec = mel.add(&fft);
-                if let Err(send_error) = mels_tx.send((idx, spec)) {}
+                if let Err(_) = mels_tx.send((idx, spec)) {}
             }
 
             drop(mels_tx);
@@ -194,7 +194,7 @@ impl Pipeline {
 
             while let Ok((idx, fft)) = mel_vad_rx.recv() {
                 let spec = mel.add(&fft);
-                if let Err(send_error) = mels_tx_clone.send((idx, spec)) {}
+                if let Err(_) = mels_tx_clone.send((idx, spec)) {}
             }
 
             drop(mels_tx_clone);
@@ -215,20 +215,20 @@ impl Pipeline {
                     for (j, m) in mels.iter().enumerate() {
                         if m.raw_dim()[0] != n_mels {
                             let mel = mels[if j == 1 { 0 } else { 1 }].clone();
-                            if let Some(gap) = vad.add(m) {
+                            if let Some(_) = vad.add(m) {
                                 let result = VadResult {
                                     start: last_cutsec,
                                     end: idx,
                                     ms: duration_ms_for_n_frames(hop_size, sampling_rate, idx),
                                 };
                                 if let Some(tx) = vad_tx_clone.lock().unwrap().as_ref() {
-                                    if let Err(send_error) = tx.send(result) {}
+                                    if let Err(_) = tx.send(result) {}
                                 }
-                                last_cutsec = idx.clone();
+                                last_cutsec = idx;
                             } else {
                                 let result = MelFrame { idx, mel };
                                 if let Some(tx) = mel_tx_clone.lock().unwrap().as_ref() {
-                                    if let Err(send_error) = tx.send(result) {}
+                                    if let Err(_) = tx.send(result) {}
                                 }
                             }
                         }
@@ -259,8 +259,8 @@ impl Pipeline {
             while let Ok((idx, samples)) = samples_rx.recv() {
                 // buffer up to an initial fft window
                 if let Some(complex) = fft.add(&samples) {
-                    if let Err(send_error) = mel_stt_tx.send((idx, complex.clone())) {}
-                    if let Err(send_error) = mel_vad_tx.send((idx, complex)) {}
+                    if let Err(_) = mel_stt_tx.send((idx, complex.clone())) {}
+                    if let Err(_) = mel_vad_tx.send((idx, complex)) {}
                 }
             }
 
@@ -284,8 +284,8 @@ impl Pipeline {
             while let Ok((idx, samples)) = sr_rx.recv() {
                 let samples = resampler.process(&[samples], None).unwrap();
                 let chan = samples[0].clone();
-                if let Err(send_error) = samples_tx.send((idx, chan)) {
-                    eprintln!("Failed to send message to fft: {:?}", send_error);
+                if let Err(e) = samples_tx.send((idx, chan)) {
+                    eprintln!("Failed to send message to fft: {:?}", e);
                 }
             }
 
@@ -302,7 +302,7 @@ impl Pipeline {
                 accumulated_samples.extend_from_slice(&samples);
                 while accumulated_samples.len() >= hop_size {
                     let (chunk, rest) = accumulated_samples.split_at(hop_size);
-                    sr_tx.send((idx.clone(), chunk.to_vec())).unwrap();
+                    sr_tx.send((idx, chunk.to_vec())).unwrap();
                     idx = idx.wrapping_add(1);
                     accumulated_samples = rest.to_vec();
                 }
@@ -310,9 +310,7 @@ impl Pipeline {
 
             if !accumulated_samples.is_empty() {
                 idx = idx.wrapping_add(1);
-                sr_tx
-                    .send((idx.clone(), accumulated_samples.clone()))
-                    .unwrap();
+                sr_tx.send((idx, accumulated_samples.clone())).unwrap();
             }
 
             drop(sr_tx);
@@ -355,7 +353,6 @@ impl PipelineOutputBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mel_spec::mel::*;
     use mel_spec::quant::*;
     use mel_spec_audio::packet::*;
     use mel_spec_audio::wav::*;
@@ -398,7 +395,7 @@ mod tests {
             dbg!(mel.idx());
             if mel.idx() % 100 == 0 {
                 let f = interleave_frames(&frames, false, 0);
-                let (q, r) = quantize(&f);
+                let (_, r) = quantize(&f);
                 frames = Vec::new();
                 dbg!(r);
             }

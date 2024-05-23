@@ -107,10 +107,10 @@ impl VoiceActivityDetector {
         let window = &self.mel_buffer[self.idx - min_x..];
         let edge_info = vad_boundaries(&window, &self.settings);
         let ni = edge_info.intersected();
-        if ni.len() > 0 {
-            return Some(ni[0] == 0);
+        if ni.is_empty() {
+            Some(ni[0] == 0)
         } else {
-            return Some(false);
+            Some(false)
         }
     }
 }
@@ -169,8 +169,8 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
             let mut gradient_y = 0.0;
             for j in 0..3 {
                 for i in 0..3 {
-                    gradient_x += view[[j, i]].clone() * sobel_x[[j, i]]; // Use sobel_x for x-direction
-                    gradient_y += view[[j, i]].clone() * sobel_y[[j, i]]; // Use sobel_y for y-direction
+                    gradient_x += view[[j, i]] * sobel_x[[j, i]]; // Use sobel_x for x-direction
+                    gradient_y += view[[j, i]] * sobel_y[[j, i]]; // Use sobel_y for y-direction
                 }
             }
             // Calculate the magnitude of the gradient (along Y-axis)
@@ -182,7 +182,7 @@ fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeI
 
     let mut intersected_columns: Vec<usize> = Vec::new();
     let mut non_intersected_columns: Vec<usize> = Vec::new();
-    let mut gradient_positions = HashSet::new();
+    let gradient_positions = HashSet::new();
 
     for x in 0..width - 2 {
         let indices: Vec<usize> = (0..height - 2)
@@ -234,20 +234,17 @@ impl EdgeInfo {
 
     /// The x-index of frames that don't intersect an edge.
     pub fn non_intersected(&self) -> Vec<usize> {
-        let val = self.non_intersected_columns.clone();
-        val
+        self.non_intersected_columns.clone()
     }
 
     /// The x-index of frames that intersect an edge.
     pub fn intersected(&self) -> Vec<usize> {
-        let val = self.intersected_columns.clone();
-        val
+        self.intersected_columns.clone()
     }
 
     ///  A bitmap, primarily used by [`as_image`].
     pub fn gradient_positions(&self) -> HashSet<(usize, usize)> {
-        let val = self.gradient_positions.clone();
-        val
+        self.gradient_positions.clone()
     }
 }
 
@@ -335,10 +332,9 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quant::{dequantize, load_tga_8bit, quantize, to_array2};
-    use std::num::NonZeroU32;
+    use crate::quant::{load_tga_8bit, to_array2};
 
-    //#[test]
+    #[test]
     fn test_speech_detection() {
         let n_mels = 80;
         let min_x = 5;
@@ -469,7 +465,7 @@ mod tests {
         let start = std::time::Instant::now();
 
         for mel in &chunks {
-            if let Some(a) = stage.add(&mel) {}
+            if let Some(_) = stage.add(&mel) {}
         }
         let elapsed = start.elapsed().as_millis();
         dbg!(elapsed);

@@ -1,4 +1,4 @@
-use js_sys::{Array, Object, Reflect, Uint8Array, Uint8ClampedArray};
+use js_sys::{Object, Reflect, Uint8Array, Uint8ClampedArray};
 use mel_spec::mel::{interleave_frames, log_mel_spectrogram, mel, norm_mel};
 use mel_spec::quant::quantize;
 use mel_spec::stft::Spectrogram;
@@ -102,7 +102,7 @@ impl SpeechToMel {
             self.idx = self.idx.wrapping_add(1);
         }
 
-        return JsValue::from(result);
+        JsValue::from(result)
     }
 }
 
