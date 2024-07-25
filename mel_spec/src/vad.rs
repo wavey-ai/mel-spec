@@ -108,9 +108,9 @@ impl VoiceActivityDetector {
         let edge_info = vad_boundaries(&window, &self.settings);
         let ni = edge_info.intersected();
         if ni.is_empty() {
-            Some(ni[0] == 0)
-        } else {
             Some(false)
+        } else {
+            Some(ni[0] == 0)
         }
     }
 }
