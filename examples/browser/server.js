@@ -9,6 +9,11 @@ const server = http.createServer((req, res) => {
 
   // Extract the file path from the request URL
   let filePath = '.' + req.url;
+    if (path.normalize(decodeURI(req.url)) !== decodeURI(req.url)) {
+        res.statusCode = 403;
+        res.end();
+        return;
+    } 
 
   // If the URL is a directory, serve the 'index.html' file within it
   if (filePath === './') {
