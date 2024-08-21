@@ -252,7 +252,7 @@ impl EdgeInfo {
 /// Edge detection is overlayed in red and boundary detection in green.
 pub fn as_image(
     frames: &[Array2<f64>],
-    non_intersected_columns: &Vec<usize>,
+    non_intersected_columns: &[usize],
     gradient_positions: &HashSet<(usize, usize)>,
 ) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();

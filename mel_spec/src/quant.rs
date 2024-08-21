@@ -136,7 +136,7 @@ pub fn chunk_frames_into_strides(
 
 /// Quantize an interleaved spectrogram, returning u8 bytes suitable for
 /// grayscale.
-pub fn quantize(frame: &Vec<f32>) -> (Vec<u8>, QuantizationRange) {
+pub fn quantize(frame: &[f32]) -> (Vec<u8>, QuantizationRange) {
     let mut result: Vec<u8> = Vec::new();
     let min = frame.iter().copied().fold(f32::INFINITY, f32::min);
     let max = frame.iter().copied().fold(f32::NEG_INFINITY, f32::max);

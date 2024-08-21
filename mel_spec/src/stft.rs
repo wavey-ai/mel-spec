@@ -44,7 +44,7 @@ impl Spectrogram {
 
     /// Takes a single channel of audio (non-interleaved, mono, f32).
     /// Returns an FFT frame using overlap-and-save and the configured `hop_size`
-    pub fn add(&mut self, frames: &Vec<f32>) -> Option<Array1<Complex<f64>>> {
+    pub fn add(&mut self, frames: &[f32]) -> Option<Array1<Complex<f64>>> {
         let fft_size = self.fft_size;
         let hop_size = self.hop_size;
 
