@@ -76,45 +76,12 @@ Results are identical to whisper.cpp and whisper.py
 
 ### Creating Mel Spectrograms from Audio.
 
-The library includes basic audio helper and a pipeline for processing
-PCM audio and creating Mel spectrograms that can be sent to whisper.cpp.
+Please refer to the test in RingBuffer [rb.rs](src/rb.rs)
 
-It also has voice activity detection that uses edge detection (which
-might be a novel approach) to identify word/speech boundaries in real-
-time.
+This uses a simple synchronous approach to creating a spectrogram from live
+or static data.
 
-```rust
-    // load the whisper jfk sample
-    let file_path = "../testdata/jfk_f32le.wav";
-    let file = File::open(&file_path).unwrap();
-    let data = parse_wav(file).unwrap();
-    let samples = deinterleave_vecs_f32(&data.data, 1);
-
-    let fft_size = 400;
-    let hop_size = 160;
-    let n_mels = 80;
-    let sampling_rate = 16000.0;
-
-    let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-    let vad_settings = DetectionSettings::new(1.0, 10, 5, 0, 100);
-
-    let config = PipelineConfig::new(mel_settings, Some(vad_settings));
-
-    let mut pl = Pipeline::new(config);
-
-    let handles = pl.start();
-
-    // chunk size can be anything, 88 is random
-    for chunk in samples[0].chunks(88) {
-        let _ = pl.send_pcm(chunk);
-    }
-
-    pl.close_ingress();
-
-    while let Ok((_, mel_spectrogram)) = pl.rx().recv() {
-      // do something with spectrogram
-    }
-```
+The code and examples in `mel_spec_pipeline` are now deprecated.
 
 ### Saving Mel Spectrograms to file
 
