@@ -402,7 +402,6 @@ mod tests {
         let edge_info = vad_boundaries(&[frames.clone()], &settings);
 
         let elapsed = start.elapsed().as_millis();
-        dbg!(elapsed);
         let img = as_image(
             &[frames.clone()],
             &edge_info.non_intersected(),
@@ -425,14 +424,12 @@ mod tests {
         let start = std::time::Instant::now();
         let file_path = "../testdata/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
-        dbg!(&dequantized_mel);
 
         let frames = to_array2(&dequantized_mel, n_mels);
 
         let edge_info = vad_boundaries(&[frames.clone()], &settings);
 
         let elapsed = start.elapsed().as_millis();
-        dbg!(elapsed);
         let img = as_image(
             &[frames.clone()],
             &edge_info.non_intersected(),
@@ -468,6 +465,5 @@ mod tests {
             if let Some(_) = stage.add(&mel) {}
         }
         let elapsed = start.elapsed().as_millis();
-        dbg!(elapsed);
     }
 }

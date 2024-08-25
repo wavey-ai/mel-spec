@@ -15,5 +15,8 @@ ndarray-npy = "0.8.1"
 num = "0.4.1"
 rustfft = { version = "6.2.0", features = ["wasm_simd"] }
 
+[dev-dependencies]
+soundkit = "0.10.0"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
