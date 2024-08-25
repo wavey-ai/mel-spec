@@ -25,6 +25,7 @@ impl Spectrogram {
     pub fn new(fft_size: usize, hop_size: usize) -> Self {
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(fft_size);
+        // Hann window
         let window: Vec<f64> = (0..fft_size)
             .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
             .collect();

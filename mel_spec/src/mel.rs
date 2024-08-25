@@ -1,6 +1,5 @@
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
-
 /// MelSpectrogram applies a pre-computed filterbank to an FFT result.
 /// Results are identical to whisper.cpp and whisper.py
 pub struct MelSpectrogram {
@@ -146,7 +145,15 @@ pub fn interleave_frames(
 }
 
 /// Mel filterbanks, within 1.0e-7 of librosa and identical to whisper GGML model-embedded filters.
-pub fn mel(sr: f64, n_fft: usize, n_mels: usize, f_min: Option<f64>, f_max: Option<f64>, htk: bool, norm: bool) -> Array2<f64> {
+pub fn mel(
+    sr: f64,
+    n_fft: usize,
+    n_mels: usize,
+    f_min: Option<f64>,
+    f_max: Option<f64>,
+    htk: bool,
+    norm: bool,
+) -> Array2<f64> {
     let fftfreqs = fft_frequencies(sr, n_fft);
     let f_min: f64 = f_min.unwrap_or(0.0); // Minimum frequency
     let f_max: f64 = f_max.unwrap_or(sr / 2.0); // Maximum frequency

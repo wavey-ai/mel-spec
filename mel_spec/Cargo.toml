@@ -1,6 +1,6 @@
 [package]
 name = "mel_spec"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 license = "MIT"
 description = "Mel spectrograms aligned to the results from the whisper.cpp, pytorch and librosa reference implementations and suited to streaming audio."
@@ -14,6 +14,9 @@ ndarray = "0.15.6"
 ndarray-npy = "0.8.1"
 num = "0.4.1"
 rustfft = { version = "6.2.0", features = ["wasm_simd"] }
+
+[dev-dependencies]
+soundkit = "0.10.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
