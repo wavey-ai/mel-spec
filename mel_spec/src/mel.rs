@@ -246,14 +246,8 @@ pub fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray_npy::write_npy;
     use ndarray_npy::NpzReader;
     use std::fs::File;
-
-    fn generate_sine_wave(freq: f64, sample_rate: f64, duration: f64) -> Array1<f64> {
-        let t: Array1<f64> = Array1::linspace(0.0, duration, (sample_rate * duration) as usize);
-        t.mapv(|t| 0.5 * (2.0 * std::f64::consts::PI * freq * t).sin())
-    }
 
     macro_rules! assert_nearby {
         ($left:expr, $right:expr, $epsilon:expr) => {{

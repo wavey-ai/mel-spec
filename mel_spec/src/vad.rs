@@ -115,33 +115,6 @@ impl VoiceActivityDetector {
     }
 }
 
-fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
-    let intersected_columns = &edge_info.intersected_columns;
-
-    if intersected_columns.is_empty() {
-        return false; // No intersected columns, so return false
-    }
-
-    let mut contiguous_count = 1; // Count of contiguous intersected columns
-    let mut prev_index = intersected_columns[0];
-
-    for &index in &intersected_columns[1..] {
-        if index == prev_index + 1 {
-            contiguous_count += 1;
-        } else {
-            contiguous_count = 1;
-        }
-
-        if contiguous_count >= n {
-            return true;
-        }
-
-        prev_index = index;
-    }
-
-    false // If no contiguous segment of n or more intersected columns is found, return false
-}
-
 /// Performs edge detection on the spectrogram using a fast Sobel operator
 fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
