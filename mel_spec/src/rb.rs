@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_ringbuffer() {
-        let fft_size = 400;
+        let fft_size = 512;
         let hop_size = 160;
         let n_mels = 80;
         let sampling_rate = 16000.0;
