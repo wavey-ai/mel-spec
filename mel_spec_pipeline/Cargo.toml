@@ -1,6 +1,6 @@
 [package]
 name = "mel_spec_pipeline"
-version = "0.2.2"
+version.workspace = true
 edition = "2021"
 license = "MIT"
 description = "Audio-to-Mel pipeline"
@@ -8,21 +8,19 @@ repository = "https://github.com/wavey-ai/mel-spec"
 readme = "README.md"
 
 [dependencies]
-crossbeam-channel = "0.5.8"
-image = "0.24.6"
-js-sys = "0.3.64"
+crossbeam-channel = { workspace = true }
+image = { workspace = true }
+js-sys = { workspace = true }
 mel_spec = { workspace = true }
 mel_spec_audio = { workspace = true }
-ndarray = "0.15.6"
-num = "0.4.1"
-rubato = "0.14.1"
-wasm-bindgen = "0.2.87"
+ndarray = { workspace = true }
+num = { workspace = true }
+rubato = { workspace = true }
+wasm-bindgen = { workspace = true }
 
 [dependencies.web-sys]
-version = "0.3.4"
-features = [
-    'Worker',
-]
+workspace = true
+features = ['Worker']
 
 [lib]
 crate-type = ["cdylib", "rlib"]

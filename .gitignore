@@ -1,3 +1,4 @@
 **/target
 **/Cargo.lock
 .DS_Store
+mel_spec/testdata/rust_jfk.npy

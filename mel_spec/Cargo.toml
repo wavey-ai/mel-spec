@@ -8,15 +8,15 @@ repository = "https://github.com/wavey-ai/mel-spec"
 readme = "README.md"
 
 [dependencies]
-image = "0.24.6"
-js-sys = "0.3.64"
-ndarray = "0.15.6"
-ndarray-npy = "0.8.1"
-num = "0.4.1"
-rustfft = { version = "6.2.0", features = ["wasm_simd"] }
+image = { workspace = true }
+js-sys = { workspace = true }
+ndarray = { workspace = true }
+ndarray-npy = { workspace = true }
+num = { workspace = true }
+rustfft = { workspace = true, features = ["wasm_simd"] }
 
 [dev-dependencies]
-soundkit = "0.10.0"
+soundkit = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
