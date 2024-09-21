@@ -94,7 +94,7 @@ mod tests {
         let mut rb = RingBuffer::new(config, 1024);
 
         // 16000 Hz, mono, flt
-        let file_path = "../testdata/jfk_f32le.wav";
+        let file_path = "./testdata/jfk_f32le.wav";
         let mut file = File::open(&file_path).unwrap();
 
         let mut processor = WavStreamProcessor::new();
