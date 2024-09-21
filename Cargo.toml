@@ -8,16 +8,18 @@ repository = "https://github.com/wavey-ai/mel-spec"
 readme = "README.md"
 
 [dependencies]
-crossbeam-channel = "0.5.8"
 image = "0.24.6"
 ndarray = "^0.16"
 ndarray-npy = "0.9.1"
 num = "0.4.1"
 rustfft = { version = "6.2.0" }
-soundkit = { version = "0.11.0", features = ["wasm"] }
 js-sys = { version = "^0.3", optional = true }
 wasm-bindgen = { version = "^0.2", optional = true }
 web-sys = { version = "^0.3", features = ['Worker'], optional = true }
+soundkit = { version = "0.11.0", features = ["wasm"], optional = true }
+
+[dev-dependencies]
+soundkit = { version = "0.11.0" }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
