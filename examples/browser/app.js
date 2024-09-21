@@ -51,14 +51,14 @@ function colorizeGrayscaleValue(value, colormapName, reverse) {
 
 let addFrame;
 
-document.addEventListener("DOMContentLoaded", async function () {
+document.addEventListener("DOMContentLoaded", async function() {
   await startWorker();
   startUi();
 
   const form = document.getElementById("uploadForm");
   const fileInput = document.getElementById("waveFileInput");
 
-  form.addEventListener("submit", async function (event) {
+  form.addEventListener("submit", async function(event) {
     event.preventDefault();
 
     const file = fileInput.files[0];
@@ -73,7 +73,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     const reader = new FileReader();
 
-    reader.onload = function (event) {
+    reader.onload = function(event) {
       const chunk = event.target.result;
 
       if (chunk.byteLength > 0) {
@@ -85,7 +85,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       }
     };
 
-    reader.onerror = function () {
+    reader.onerror = function() {
       console.error("Error reading file.");
     };
 

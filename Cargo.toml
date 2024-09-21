@@ -1,24 +1,29 @@
-[workspace]
-resolver = "2"
-members = ["mel_spec", "mel_spec_pipeline", "mel_spec_audio"]
+[package]
+name = "mel_spec"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Mel spectrograms aligned to the results from the whisper.cpp, pytorch and librosa reference implementations and suited to streaming audio."
+repository = "https://github.com/wavey-ai/mel-spec"
+readme = "README.md"
 
-
-[workspace.package]
-version = "0.2.2"
-
-[workspace.dependencies]
-mel_spec = { path = "./mel_spec", version = "0.2.2" }
-mel_spec_audio = { path = "./mel_spec_audio", version = "0.2.2" }
+[dependencies]
 crossbeam-channel = "0.5.8"
 image = "0.24.6"
-js-sys = "0.3.64"
 ndarray = "^0.16"
 ndarray-npy = "0.9.1"
 num = "0.4.1"
 rustfft = { version = "6.2.0" }
-soundkit = "0.10.0"
-wasm-bindgen = "0.2.87"
-web-sys = { version = "0.3.4" }
+soundkit = { version = "0.11.0", features = ["wasm"] }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+web-sys = { version = "0.3", features = ['Worker'], optional = true }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+wasm = ["web-sys", "wasm-bindgen", "js-sys"]
 
 [profile.release]
 codegen-units = 1

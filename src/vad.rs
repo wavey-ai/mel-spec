@@ -347,7 +347,7 @@ mod tests {
 
         let ids = vec![21168, 23760, 41492, 41902, 63655, 7497, 39744];
         for id in ids {
-            let file_path = format!("../testdata/blank/frame_{}.tga", id);
+            let file_path = format!("./testdata/blank/frame_{}.tga", id);
             let dequantized_mel = load_tga_8bit(&file_path).unwrap();
             let frames = to_array2(&dequantized_mel, n_mels);
 
@@ -359,13 +359,13 @@ mod tests {
             );
 
             assert!(vad_on(&edge_info, min_x) == false);
-            let path = format!("../testdata/vad_off_{}.png", id);
+            let path = format!("./testdata/vad_off_{}.png", id);
             img.save(path).unwrap();
         }
 
         let ids = vec![11648, 2889, 4694, 4901, 27125];
         for id in ids {
-            let file_path = format!("../testdata/speech/frame_{}.tga", id);
+            let file_path = format!("./testdata/speech/frame_{}.tga", id);
             let dequantized_mel = load_tga_8bit(&file_path).unwrap();
             let frames = to_array2(&dequantized_mel, n_mels);
 
@@ -377,7 +377,7 @@ mod tests {
             );
 
             assert!(vad_on(&edge_info, min_x) == true);
-            let path = format!("../testdata/vad_on_{}.png", id);
+            let path = format!("./testdata/vad_on_{}.png", id);
             img.save(path).unwrap();
 
             //assert!(edge_info.gradient_count > 800);
@@ -395,7 +395,7 @@ mod tests {
         };
 
         let start = std::time::Instant::now();
-        let file_path = "../testdata/jfk_full_speech_chunk0_golden.tga";
+        let file_path = "./testdata/jfk_full_speech_chunk0_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
         let frames = to_array2(&dequantized_mel, n_mels);
 
@@ -409,7 +409,7 @@ mod tests {
             &edge_info.gradient_positions(),
         );
 
-        img.save("../doc/debug.png").unwrap();
+        img.save("./doc/debug.png").unwrap();
     }
 
     #[test]
@@ -423,7 +423,7 @@ mod tests {
         };
 
         let start = std::time::Instant::now();
-        let file_path = "../testdata/quantized_mel_golden.tga";
+        let file_path = "./testdata/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
         dbg!(&dequantized_mel);
 
@@ -439,7 +439,7 @@ mod tests {
             &edge_info.gradient_positions(),
         );
 
-        img.save("../doc/vad.png").unwrap();
+        img.save("./doc/vad.png").unwrap();
     }
 
     //    #[test]
@@ -453,7 +453,7 @@ mod tests {
         };
         let mut stage = VoiceActivityDetector::new(&settings);
 
-        let file_path = "../testdata/quantized_mel_golden.tga";
+        let file_path = "./testdata/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
         let frames = to_array2(&dequantized_mel, n_mels);
         let chunk_size = 1;

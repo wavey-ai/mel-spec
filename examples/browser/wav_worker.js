@@ -1,9 +1,9 @@
-importScripts("./dist/mel_spec_audio.js");
+importScripts("./dist/soundkit.js");
 importScripts("./ringbuffer.js");
 
 const { WavToPcm } = wasm_bindgen_wav;
 
-const instance = wasm_bindgen_wav("./dist/mel_spec_audio_bg.wasm");
+const instance = wasm_bindgen_wav("./dist/soundkit_bg.wasm");
 
 async function init_wasm_in_worker() {
   // Load the wasm file by awaiting the Promise returned by `wasm_bindgen`.
@@ -17,12 +17,12 @@ async function init_wasm_in_worker() {
     if (event.data.pcmSab) {
       let opts = event.data;
       len = opts.pcmBufOpts.size,
-      pcmBuf = ringbuffer(
-        opts.pcmSab,
-        opts.pcmBufOpts.size,
-        opts.pcmBufOpts.max,
-        Float32Array,
-      );
+        pcmBuf = ringbuffer(
+          opts.pcmSab,
+          opts.pcmBufOpts.size,
+          opts.pcmBufOpts.max,
+          Float32Array,
+        );
     } else {
       var byteArray = new Int8Array(event.data.buf);
       let audio = mod.add(byteArray);
