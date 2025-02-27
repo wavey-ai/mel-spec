@@ -143,7 +143,7 @@ pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
 }
 
 /// Performs edge detection on the spectrogram using a fast Sobel operator
-fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
+pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
     let min_energy = settings.min_energy;
     let min_y = settings.min_y;
