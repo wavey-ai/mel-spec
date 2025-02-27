@@ -126,7 +126,8 @@ pub fn chunk_frames_into_strides(
             let chunk = ndarray_image
                 .slice(s![y..end_y, x..end_x])
                 .to_owned()
-                .into_raw_vec();
+                .into_raw_vec_and_offset()
+                .0;
             chunks.push(chunk);
         }
     }

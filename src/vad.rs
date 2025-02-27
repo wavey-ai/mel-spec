@@ -115,7 +115,7 @@ impl VoiceActivityDetector {
     }
 }
 
-fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
+pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
     let intersected_columns = &edge_info.intersected_columns;
 
     if intersected_columns.is_empty() {
@@ -384,7 +384,8 @@ mod tests {
         }
     }
 
-    //#[test]
+    #[ignore]
+    #[test]
     fn test_vad_debug() {
         let n_mels = 80;
         let settings = DetectionSettings {
@@ -442,7 +443,8 @@ mod tests {
         img.save("./doc/vad.png").unwrap();
     }
 
-    //    #[test]
+    #[ignore]
+    #[test]
     fn test_stage() {
         let n_mels = 80;
         let settings = DetectionSettings {

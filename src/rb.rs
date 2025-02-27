@@ -76,7 +76,6 @@ impl RingBuffer {
 mod tests {
     use super::*;
     use crate::mel::interleave_frames;
-    use ndarray::{Array1, Axis};
     use ndarray_npy::write_npy;
     use soundkit::{audio_bytes::deinterleave_vecs_f32, wav::WavStreamProcessor};
     use std::fs::File;
@@ -132,6 +131,6 @@ mod tests {
             Array2::from_shape_vec((num_frequency_bands, num_time_steps), flattened_frames)
                 .expect("Error reshaping flattened frames");
 
-        write_npy("./testdata/rust_jfk.npy", &stacked_frames);
+        let _ = write_npy("./testdata/rust_jfk.npy", &stacked_frames);
     }
 }

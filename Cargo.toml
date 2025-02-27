@@ -7,6 +7,8 @@ description = "Mel spectrograms aligned to the results from the whisper.cpp, pyt
 repository = "https://github.com/wavey-ai/mel-spec"
 readme = "README.md"
 
+exclude = ["testdata/*"]
+
 [dependencies]
 image = "0.24.6"
 ndarray = "0.16.1"
@@ -17,6 +19,7 @@ js-sys = { version = "^0.3", optional = true }
 wasm-bindgen = { version = "^0.2", optional = true }
 web-sys = { version = "^0.3", features = ['Worker'], optional = true }
 soundkit = { version = "0.11.0", features = ["wasm"], optional = true }
+
 
 [dev-dependencies]
 soundkit = { version = "0.11.0" }
