@@ -142,72 +142,97 @@ pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
     false // If no contiguous segment of n or more intersected columns is found, return false
 }
 
-/// Performs edge detection on the spectrogram using a fast Sobel operator
 pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
     let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
     let min_energy = settings.min_energy;
     let min_y = settings.min_y;
     let min_mel = settings.min_mel;
-    // Concatenate the array views along Axis 0
+
+    // Concatenate the array views along the time (x) axis.
     let merged_frames = concatenate(Axis(1), &array_views).unwrap();
     let shape = merged_frames.raw_dim();
     let width = shape[1];
     let height = shape[0];
 
-    // Sobel kernels for gradient calculation (to detect gradients along the X-axis)
+    // Sobel kernels for edge detection.
     let sobel_x =
-        Array::from_shape_vec((3, 3), vec![-1., 0., 1., -2., 0., 2., -1., 0., 1.]).unwrap();
+        Array::from_shape_vec((3, 3), vec![-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0])
+            .unwrap();
     let sobel_y =
-        Array::from_shape_vec((3, 3), vec![-1., -2., -1., 0., 0., 0., 1., 2., 1.]).unwrap();
+        Array::from_shape_vec((3, 3), vec![-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0])
+            .unwrap();
 
-    // Convolve with Sobel kernels and calculate the gradient magnitude along the Y-axis
+    // Compute gradient magnitude for each valid (3x3) patch.
     let gradient_mag = Array::from_shape_fn((height - 2, width - 2), |(y, x)| {
-        if y < height && x < width {
-            // Add boundary check to avoid going out of bounds
-            let view = merged_frames.slice(s![y..y + 3, x..x + 3]);
-            let mut gradient_x = 0.0;
-            let mut gradient_y = 0.0;
-            for j in 0..3 {
-                for i in 0..3 {
-                    gradient_x += view[[j, i]] * sobel_x[[j, i]]; // Use sobel_x for x-direction
-                    gradient_y += view[[j, i]] * sobel_y[[j, i]]; // Use sobel_y for y-direction
-                }
+        let view = merged_frames.slice(s![y..y + 3, x..x + 3]);
+        let mut gradient_x = 0.0;
+        let mut gradient_y = 0.0;
+        for j in 0..3 {
+            for i in 0..3 {
+                gradient_x += view[[j, i]] * sobel_x[[j, i]];
+                gradient_y += view[[j, i]] * sobel_y[[j, i]];
             }
-            // Calculate the magnitude of the gradient (along Y-axis)
-            (gradient_x * gradient_x + gradient_y * gradient_y).sqrt()
-        } else {
-            0.0
         }
+        (gradient_x * gradient_x + gradient_y * gradient_y).sqrt()
     });
 
-    let mut intersected_columns: Vec<usize> = Vec::new();
-    let mut non_intersected_columns: Vec<usize> = Vec::new();
-    let gradient_positions = HashSet::new();
+    // Build a raw binary classification for each column based on count of above-threshold pixels.
+    let mut raw_classification = Vec::with_capacity(width - 2);
+    for x in 0..(width - 2) {
+        let mut count = 0;
+        for y in 0..(height - 2) {
+            let grad = gradient_mag[(y, x)];
+            if y >= min_mel && grad >= min_energy {
+                count += 1;
+            }
+        }
+        raw_classification.push(count >= min_y);
+    }
 
-    for x in 0..width - 2 {
-        let indices: Vec<usize> = (0..height - 2)
-            .filter(|&y| gradient_mag[(y, x)] >= min_energy && y >= min_mel)
-            .collect();
+    // Apply temporal smoothing via a moving-window majority vote.
+    // For each index, we consider a window of neighboring columns (window size can be adjusted).
+    let smoothed_classification = smooth_mask(&raw_classification, 4);
 
-        let num_intersections = indices.len();
-
-        if num_intersections <= min_y {
-            non_intersected_columns.push(x);
-        } else if num_intersections >= min_y {
+    // Split the smoothed results into active (intersected) and inactive (non-intersected) columns.
+    let mut intersected_columns = Vec::new();
+    let mut non_intersected_columns = Vec::new();
+    for (x, &active) in smoothed_classification.iter().enumerate() {
+        if active {
             intersected_columns.push(x);
-
-            // Store the gradient positions for this column
-            //            for y in indices {
-            //                gradient_positions.insert((x, y));
-            //:            }
+        } else {
+            non_intersected_columns.push(x);
         }
     }
+
+    // We leave gradient_positions empty in this version.
+    let gradient_positions = HashSet::new();
 
     EdgeInfo::new(
         non_intersected_columns,
         intersected_columns,
         gradient_positions,
     )
+}
+
+/// Applies a simple temporal smoothing (moving-window majority vote) over a binary mask.
+/// For each index, we look at the window of values [i-window, i+window] and set the smoothed
+/// value to true if at least half of the values in that window are true.
+fn smooth_mask(mask: &[bool], window: usize) -> Vec<bool> {
+    let n = mask.len();
+    let mut smoothed = vec![false; n];
+    for i in 0..n {
+        let start = if i < window { 0 } else { i - window };
+        let end = if i + window + 1 > n {
+            n
+        } else {
+            i + window + 1
+        };
+        let count_true = mask[start..end].iter().filter(|&&val| val).count();
+        if count_true * 2 >= (end - start) {
+            smoothed[i] = true;
+        }
+    }
+    smoothed
 }
 
 /// EdgeInfo is the result of Voice Activity Detection.
