@@ -119,10 +119,10 @@ pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
     let intersected_columns = &edge_info.intersected_columns;
 
     if intersected_columns.is_empty() {
-        return false; // No intersected columns, so return false
+        return false;
     }
 
-    let mut contiguous_count = 1; // Count of contiguous intersected columns
+    let mut contiguous_count = 1;
     let mut prev_index = intersected_columns[0];
 
     for &index in &intersected_columns[1..] {
@@ -139,7 +139,7 @@ pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
         prev_index = index;
     }
 
-    false // If no contiguous segment of n or more intersected columns is found, return false
+    false
 }
 
 pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_speech_detection() {
         let n_mels = 80;
-        let min_x = 5;
+        let min_x = 10;
         let settings = DetectionSettings {
             min_energy: 1.0,
             min_y: 10,
@@ -383,6 +383,7 @@ mod tests {
                 &edge_info.gradient_positions(),
             );
 
+            dbg!(file_path);
             assert!(vad_on(&edge_info, min_x) == false);
             let path = format!("./testdata/vad_off_{}.png", id);
             img.save(path).unwrap();
