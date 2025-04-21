@@ -246,6 +246,7 @@ pub fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::Array3;
     use ndarray_npy::NpzReader;
     use std::fs::File;
 
@@ -333,6 +334,27 @@ mod tests {
         assert_eq!(got.shape(), vec![80, 201]);
         for i in 0..80 {
             assert_nearby!(got.row(i), want.row(i), 1.0e-7);
+        }
+    }
+
+    #[test]
+    fn test_nemo_mel_filters() {
+        // Load the raw filter‐bank tensor (which is saved as an f32 array
+        // with shape [1, n_mels, n_freq_bins])
+        let mut npz = NpzReader::new(File::open("testdata/nemo_mel_filters.npz").unwrap()).unwrap();
+        let raw: Array3<f32> = npz.by_name("banks").unwrap();
+        // Drop the leading singleton batch dimension → shape [n_mels, n_freq_bins]
+        let filters_f32: Array2<f32> = raw.index_axis(Axis(0), 0).to_owned();
+        // Convert to f64 for comparison
+        let want: Array2<f64> = filters_f32.mapv(f64::from);
+
+        // Compute our mel filterbanks independently
+        let got = mel(16000.0, 512, 80, None, None, false, true);
+
+        assert_eq!(got.shape(), want.shape());
+
+        for i in 0..got.nrows() {
+            assert_nearby!(got.row(i), want.row(i), 1e-7);
         }
     }
 
