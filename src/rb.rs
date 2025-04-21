@@ -13,7 +13,6 @@ pub struct RingBuffer {
     accumulated_samples: Vec<f32>,
 
     #[cfg(feature = "rtrb")]
-    // rtrb gives us a single-producer/single-consumer buffer
     producer: Producer<f32>,
     #[cfg(feature = "rtrb")]
     consumer: Consumer<f32>,
@@ -126,7 +125,8 @@ impl RingBuffer {
 mod tests {
     use super::*;
     use crate::mel::interleave_frames;
-    use ndarray_npy::write_npy;
+    use ndarray::{Array2, Zip};
+    use ndarray_npy::read_npy;
     use soundkit::{audio_bytes::deinterleave_vecs_f32, wav::WavStreamProcessor};
     use std::fs::File;
     use std::io::Read;
@@ -136,51 +136,45 @@ mod tests {
         let fft_size = 512;
         let hop_size = 160;
         let n_mels = 80;
-        let sampling_rate = 16000.0;
-
+        let sampling_rate = 16_000.0;
         let config = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-
         let mut rb = RingBuffer::new(config, 1024);
 
-        // 16000 Hz, mono, flt
-        let file_path = "./testdata/jfk_f32le.wav";
-        let mut file = File::open(&file_path).unwrap();
-
+        let mut file = File::open("./testdata/jfk_f32le.wav").unwrap();
         let mut processor = WavStreamProcessor::new();
-        let mut buffer = [0u8; 128];
-
+        let mut buf = [0_u8; 128];
         let mut frames: Vec<Array2<f64>> = Vec::new();
+
         loop {
-            let bytes_read = file.read(&mut buffer).unwrap();
-            if bytes_read == 0 {
+            let n = file.read(&mut buf).unwrap();
+            if n == 0 {
                 break;
             }
-
-            let chunk = &buffer[..bytes_read];
-            match processor.add(chunk) {
-                Ok(Some(audio_data)) => {
-                    // the test data is f32 mono
-                    let samples = deinterleave_vecs_f32(audio_data.data(), 1);
-                    rb.add_frame(&samples[0]);
-                    if let Some(mel_frame) = rb.maybe_mel() {
-                        frames.push(mel_frame);
-                    }
+            if let Ok(Some(audio)) = processor.add(&buf[..n]) {
+                let samples = deinterleave_vecs_f32(audio.data(), 1);
+                rb.add_frame(&samples[0]);
+                if let Some(mel_frame) = rb.maybe_mel() {
+                    frames.push(mel_frame);
                 }
-                Ok(None) => continue,
-                Err(err) => panic!("Error: {}", err),
             }
         }
 
-        let flattened_frames = interleave_frames(&frames, false, 0);
+        // interleave and collect as f64
+        let flat_f32: Vec<f32> = interleave_frames(&frames, false, 0);
+        let flat: Vec<f64> = flat_f32.into_iter().map(f64::from).collect();
 
-        let num_time_steps = frames.len();
-        let num_frequency_bands = frames[0].dim().0; // Assuming all frames have the same number of rows
+        let t = frames.len();
+        let f = frames[0].dim().0;
+        let got: Array2<f64> = Array2::from_shape_vec((f, t), flat).unwrap();
 
-        // Reshape the flattened frames into a 2D array
-        let stacked_frames =
-            Array2::from_shape_vec((num_frequency_bands, num_time_steps), flattened_frames)
-                .expect("Error reshaping flattened frames");
+        // load golden as f32
+        let want_f32: Array2<f32> = read_npy("./testdata/rust_jfk_golden.npy").unwrap();
 
-        let _ = write_npy("./testdata/rust_jfk.npy", &stacked_frames);
+        assert_eq!(got.shape(), want_f32.shape());
+
+        Zip::from(&got).and(&want_f32).for_each(|&a_f64, &b_f32| {
+            let a = a_f64 as f32;
+            assert!((a - b_f32).abs() <= 1e-6);
+        });
     }
 }
