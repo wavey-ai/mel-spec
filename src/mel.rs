@@ -1,3 +1,6 @@
+#[cfg(feature = "ort-tensor")]
+use ort::value::Tensor;
+
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
 /// MelSpectrogram applies a pre-computed filterbank to an FFT result.
@@ -19,7 +22,21 @@ impl MelSpectrogram {
     }
 }
 
-/// Normalisation is a separate step, see [`norm_mel`].
+#[cfg(feature = "ort-tensor")]
+pub fn mel_tensor(frames: &[f32], n_mels: usize) -> (Tensor<f32>, Tensor<i64>) {
+    let num_frames = frames.len() / n_mels;
+
+    // (1) audio tensor: shape [1, n_mels, num_frames]
+    let audio = Tensor::from_array(([1, n_mels as i64, num_frames as i64], frames.to_vec()))
+        .expect("failed to create audio tensor");
+
+    // (2) length tensor: shape [1]
+    let lengths = Tensor::from_array(([1_i64], vec![num_frames as i64]))
+        .expect("failed to create length tensor");
+
+    (audio, lengths)
+}
+
 /// The normalised `Array2` output must be processed with [`interleave_frames`]
 /// before sending to whisper.cpp
 pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {

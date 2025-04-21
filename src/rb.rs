@@ -1,10 +1,26 @@
 use crate::{config::MelConfig, mel::MelSpectrogram, stft};
 use ndarray::Array2;
+
+#[cfg(feature = "rtrb")]
+use rtrb::RingBuffer as RtrbBuffer;
+#[cfg(feature = "rtrb")]
+use rtrb::{Consumer, Producer};
+
+#[cfg(not(feature = "rtrb"))]
 use std::collections::VecDeque;
 
 pub struct RingBuffer {
     accumulated_samples: Vec<f32>,
+
+    #[cfg(feature = "rtrb")]
+    // rtrb gives us a single-producer/single-consumer buffer
+    producer: Producer<f32>,
+    #[cfg(feature = "rtrb")]
+    consumer: Consumer<f32>,
+
+    #[cfg(not(feature = "rtrb"))]
     buffer: VecDeque<f32>,
+
     fft: stft::Spectrogram,
     mel: MelSpectrogram,
     config: MelConfig,
@@ -16,47 +32,76 @@ impl RingBuffer {
         let fft_size = config.fft_size();
         let sample_rate = config.sampling_rate();
 
+        #[cfg(feature = "rtrb")]
+        let (producer, consumer) = RtrbBuffer::<f32>::new(capacity);
+
+        #[cfg(not(feature = "rtrb"))]
         let buffer = VecDeque::with_capacity(capacity);
-        let accumulated_samples = Vec::with_capacity(hop_size);
-        let mel = MelSpectrogram::new(fft_size, sample_rate, config.n_mels());
-        let fft = stft::Spectrogram::new(fft_size, hop_size);
 
         Self {
-            config,
+            config: config.clone(),
+            accumulated_samples: Vec::with_capacity(hop_size),
+            #[cfg(feature = "rtrb")]
+            producer,
+            #[cfg(feature = "rtrb")]
+            consumer,
+            #[cfg(not(feature = "rtrb"))]
             buffer,
-            accumulated_samples,
-            mel,
-            fft,
+            fft: stft::Spectrogram::new(fft_size, hop_size),
+            mel: MelSpectrogram::new(fft_size, sample_rate, config.n_mels()),
         }
     }
 
     pub fn add_frame(&mut self, samples: &[f32]) {
-        let available_capacity = self.buffer.capacity() - self.buffer.len();
-        if samples.len() > available_capacity {
-            // If incoming samples exceed available capacity, remove the excess from the front
-            self.buffer.drain(0..samples.len() - available_capacity);
+        #[cfg(feature = "rtrb")]
+        {
+            // rtrb::Producer::push will overwrite old data if full
+            for &s in samples {
+                let _ = self.producer.push(s);
+            }
         }
-        self.buffer.extend(samples);
+        #[cfg(not(feature = "rtrb"))]
+        {
+            let available = self.buffer.capacity() - self.buffer.len();
+            if samples.len() > available {
+                self.buffer.drain(0..(samples.len() - available));
+            }
+            self.buffer.extend(samples);
+        }
     }
 
     pub fn add(&mut self, sample: f32) {
-        if self.buffer.len() == self.buffer.capacity() {
-            self.buffer.pop_front();
+        #[cfg(feature = "rtrb")]
+        {
+            let _ = self.producer.push(sample);
         }
-        self.buffer.push_back(sample);
+        #[cfg(not(feature = "rtrb"))]
+        {
+            if self.buffer.len() == self.buffer.capacity() {
+                self.buffer.pop_front();
+            }
+            self.buffer.push_back(sample);
+        }
     }
 
     pub fn maybe_mel(&mut self) -> Option<Array2<f64>> {
         let hop_size = self.config.hop_size();
 
-        if self.accumulated_samples.len() >= hop_size {
-            // Accumulated samples are sufficient to process
-            let frame = self.accumulated_samples.split_off(hop_size);
-            std::mem::swap(&mut self.accumulated_samples, &mut frame.clone());
-        } else {
-            // Accumulate more samples from the buffer
+        // first, accumulate into `accumulated_samples`
+        #[cfg(feature = "rtrb")]
+        {
+            while self.accumulated_samples.len() < hop_size {
+                if let Ok(s) = self.consumer.pop() {
+                    self.accumulated_samples.push(s);
+                } else {
+                    break;
+                }
+            }
+        }
+        #[cfg(not(feature = "rtrb"))]
+        {
             let to_add = hop_size - self.accumulated_samples.len();
-            let available = self.buffer.len().min(to_add); // Ensure we don't try to drain more than available
+            let available = self.buffer.len().min(to_add);
             self.accumulated_samples
                 .extend(self.buffer.drain(..available));
         }
@@ -65,10 +110,15 @@ impl RingBuffer {
             return None;
         }
 
-        let fft_result = self.fft.add(&self.accumulated_samples);
-        self.accumulated_samples.clear();
+        // we have enough to do one frame
+        let mut frame = Vec::new();
+        std::mem::swap(&mut frame, &mut self.accumulated_samples);
 
-        fft_result.map(|fft| self.mel.add(&fft))
+        let fft_res = self.fft.add(&frame);
+        match fft_res {
+            Some(fft) => Some(self.mel.add(&fft)),
+            None => None,
+        }
     }
 }
 
