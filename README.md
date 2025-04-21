@@ -1,8 +1,7 @@
 # Mel Spec
 
 A Rust implementation of mel spectrograms aligned to the results from the
-whisper.cpp, pytorch and librosa reference implementations and suited to
-streaming audio.
+whisper.cpp, pytorch librosa and NeMo reference implementations.
 
 Sep 21st: I'm in the process of fixing examples in particular whisper-rs
 integration.
