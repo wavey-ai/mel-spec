@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct MelConfig {
     fft_size: usize,
     hop_size: usize,
