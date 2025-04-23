@@ -115,3 +115,176 @@ impl<C: MelConfig + Clone> MelStreamer<C> {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::NemoConfig;
+    use crate::mel::interleave_frames;
+    use crate::quant::save_tga_8bit;
+    use ndarray::{s, Array2, concatenate, Axis};
+    use ndarray_npy::{read_npy, write_npy};
+    use soundkit::{
+        audio_bytes::{deinterleave_vecs_f32, deinterleave_vecs_i16},
+        wav::WavStreamProcessor,
+    };
+    use std::{
+        fs,
+        fs::File,
+        io::Read,
+        path::{Path, PathBuf},
+        time::Instant,
+    };
+
+    #[test]
+    fn test_load_tensor_to_tga() {
+        let start = Instant::now();
+
+        let tensor_path = "./testdata/exported_audio.npy";
+        let output_tga_path = "./testdata/exported_spectrogram.tga";
+
+        let mut features: Array2<f32> =
+            read_npy(Path::new(tensor_path)).expect("failed to read tensor .npy");
+        let (mut n_mels, mut time_steps) = features.dim();
+        if n_mels != 80 {
+            features = features.reversed_axes().to_owned();
+            let dims = features.dim();
+            n_mels = dims.0;
+            time_steps = dims.1;
+        }
+        assert_eq!(n_mels, 80);
+
+        let features_f64 = features.mapv(|x| x as f64);
+        let mut frames: Vec<Array2<f64>> = Vec::with_capacity(time_steps);
+        for t in 0..time_steps {
+            let frame = features_f64
+                .slice(s![.., t])
+                .to_owned()
+                .into_shape((n_mels, 1))
+                .unwrap();
+            frames.push(frame);
+        }
+
+        let flattened = interleave_frames(&frames, false, 0);
+        save_tga_8bit(&flattened, n_mels, output_tga_path).unwrap();
+
+        let duration_ms = start.elapsed().as_millis();
+        println!("test_load_tensor_to_tga took {} ms", duration_ms);
+    }
+
+    #[test]
+    fn test_harvard_wavs_to_tga() {
+        let test_start = Instant::now();
+
+        let config = NemoConfig::default();
+        let dir: &Path = Path::new("/Users/jamieb/wavey.ai/harvard-lines/output2/");
+        let out: &Path = Path::new("./harvard");
+        if !out.exists() {
+            fs::create_dir_all(out).unwrap();
+        }
+
+        let files: Vec<PathBuf> = find_wav_files(dir);
+        assert!(!files.is_empty(), "No WAV files found");
+
+        let mut all_frames: Vec<Array2<f64>> = Vec::new();
+
+        for path in files {
+            let file_start = Instant::now();
+
+            let mut f = File::open(&path).unwrap();
+            let mut proc = WavStreamProcessor::new();
+            let mut stream = MelStreamer::new(config.clone(), 1024);
+            let mut buf = [0u8; 1024];
+            let mut frames: Vec<Array2<f64>> = Vec::new();
+
+            while let Ok(n) = f.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(Some(data)) = proc.add(&buf[..n]) {
+                    let i16s = deinterleave_vecs_i16(data.data(), 1);
+                    let floats: Vec<f32> =
+                        i16s[0].iter().map(|&s| s as f32 / 32768.0).collect();
+                    stream.add_frame(&floats);
+                    while let Some(mel_frame) = stream.maybe_mel() {
+                        frames.push(mel_frame);
+                    }
+                }
+            }
+            frames.extend(stream.close());
+            all_frames.extend(frames);
+
+            let file_duration_ms = file_start.elapsed().as_millis();
+            println!(
+                "Processed '{}' in {} ms",
+                path.file_name().unwrap().to_string_lossy(),
+                file_duration_ms
+            );
+        }
+
+        // combine all per-file frames
+        let views: Vec<_> = all_frames.iter().map(|m| m.view()).collect();
+        let mut full = concatenate(Axis(1), &views).unwrap();
+        full = crate::mel::normalize_per_feature(full);
+
+        let reint: Vec<Array2<f64>> = (0..full.shape()[1])
+            .map(|t| full.slice(s![.., t]).to_owned().insert_axis(Axis(1)))
+            .collect();
+        let flat = interleave_frames(&reint, false, 0);
+        save_tga_8bit(&flat, config.features(), "./harvard_export.tga").unwrap();
+
+        let total_duration_ms = test_start.elapsed().as_millis();
+        println!("test_harvard_wavs_to_tga total took {} ms", total_duration_ms);
+    }
+
+    #[test]
+    fn test_melstreamer_end_to_end() {
+        let start = Instant::now();
+
+        let mut file = File::open("./testdata/jfk_f32le.wav").unwrap();
+        let mut proc = WavStreamProcessor::new();
+        let config = NemoConfig::default();
+        let mut stream = MelStreamer::new(config.clone(), 1024);
+        let mut buf = [0u8; 128];
+        let mut frames: Vec<Array2<f64>> = Vec::new();
+
+        while let Ok(n) = file.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            if let Ok(Some(data)) = proc.add(&buf[..n]) {
+                let samps = deinterleave_vecs_f32(data.data(), 1);
+                stream.add_frame(&samps[0]);
+                while let Some(mel_frame) = stream.maybe_mel() {
+                    frames.push(mel_frame);
+                }
+            }
+        }
+        frames.extend(stream.close());
+
+        let flattened = interleave_frames(&frames, false, 0);
+        let bands = frames[0].dim().0;
+        let steps = frames.len();
+        let stacked = Array2::from_shape_vec((bands, steps), flattened).unwrap();
+        write_npy("./testdata/rust_jfk.npy", &stacked).unwrap();
+
+        let duration_ms = start.elapsed().as_millis();
+        println!("test_melstreamer_end_to_end took {} ms", duration_ms);
+    }
+
+    fn find_wav_files(dir: &Path) -> Vec<PathBuf> {
+        let mut wav = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for e in entries.filter_map(Result::ok) {
+                let p = e.path();
+                if p.is_dir() {
+                    wav.extend(find_wav_files(&p));
+                } else if p.extension().map(|e| e == "wav").unwrap_or(false) {
+                    wav.push(p);
+                }
+            }
+        }
+        wav
+    }
+}
+
