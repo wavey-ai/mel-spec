@@ -1,148 +1,5 @@
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
-/// MelSpectrogram applies a pre-computed filterbank to an FFT result.
-/// Results are identical to whisper.cpp and whisper.py
-pub struct MelSpectrogram {
-    filters: Array2<f64>,
-}
-
-impl MelSpectrogram {
-    pub fn new(fft_size: usize, sampling_rate: f64, n_mels: usize) -> Self {
-        let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
-        Self { filters }
-    }
-
-    pub fn add(&mut self, fft: &Array1<Complex<f64>>) -> Array2<f64> {
-        let mel = log_mel_spectrogram(&fft, &self.filters);
-        let norm = norm_mel(&mel);
-        norm
-    }
-}
-
-/// Normalisation is a separate step, see [`norm_mel`].
-/// The normalised `Array2` output must be processed with [`interleave_frames`]
-/// before sending to whisper.cpp
-pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
-    let mut magnitudes_padded = stft
-        .iter()
-        .map(|v| v.norm_sqr())
-        .take(stft.len() / 2)
-        .collect::<Vec<_>>();
-
-    magnitudes_padded.push(0.0);
-
-    let magnitudes_reshaped =
-        Array2::from_shape_vec((1, magnitudes_padded.len()), magnitudes_padded).unwrap();
-
-    let epsilon = 1e-10;
-    let mel_spec = mel_filters
-        .dot(&magnitudes_reshaped.t())
-        .mapv(|sum| (sum.max(epsilon)).log10());
-
-    mel_spec
-}
-
-/// Normalisation based on max value in the sample window.
-///
-/// It's adequate to normalise ftt window-size sample lengths individually but larger sample
-/// sizes may sometimes give better results and these functions allow flexibility in the
-/// sample size that's normalised over.
-pub fn norm_mel(mel_spec: &Array2<f64>) -> Array2<f64> {
-    let mmax = mel_spec.fold(f64::NEG_INFINITY, |acc, x| acc.max(*x));
-    let mmax = mmax - 8.0;
-    let clamped: Array2<f64> = mel_spec.mapv(|x| (x.max(mmax) + 4.0) / 4.0).mapv(|x| x);
-
-    clamped
-}
-
-/// Vector-variant of norm_mel.
-pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
-    let mmax = mel_spec
-        .iter()
-        .fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
-    let mmax = mmax - 8.0;
-    let clamped: Vec<f32> = mel_spec
-        .iter()
-        .map(|&x| ((x.max(mmax) + 4.0) / 4.0) as f32)
-        .collect();
-
-    clamped
-}
-
-/// Interleave a mel spectrogram
-///
-/// Required for creating images or passing to `whisper.cpp`
-///
-/// Major column order: for waterfall representations where each row is a single time frame.
-/// Major row order: interleaved such that each row represents a different frequency band,
-/// and each column represents a time step.
-///
-/// The default is *major row order* - whisper.cpp expects this.
-pub fn interleave_frames(
-    frames: &[Array2<f64>],
-    major_column_order: bool,
-    min_width: usize,
-) -> Vec<f32> {
-    let mut num_frames = frames.len();
-
-    assert!(num_frames > 0, "frames is empty");
-    assert!(min_width % 2 == 0, "min_width must be even");
-
-    let num_filters = frames[0].shape()[0];
-
-    let mut frames = frames.to_vec();
-
-    // Ensure an even number of frames by padding with a zeroed frame if necessary
-    // *important* mel spectrograms must have even number of columns, otherwise
-    // whisper model will give random results.
-    if min_width > 0 && num_frames % 2 != 0 {
-        frames.push(Array2::from_shape_fn((num_filters, 1), |(_, _)| 0.0));
-        num_frames += 1;
-    }
-
-    // Calculate the combined width along Axis(1) of all frames
-    let combined_width: usize = frames.iter().map(|frame| frame.shape()[1]).sum();
-
-    // Determine the required padding
-    let padding = min_width.saturating_sub(combined_width);
-
-    // Create a new Array2 with the required padding
-    let padded_frame = Array2::from_shape_fn((num_filters, padding), |(_, _)| 0.0);
-
-    // Insert the padded frame to the end of the frames array if padding is needed
-    let mut frames_with_padding = frames.to_vec();
-    if padding > 0 {
-        frames_with_padding.push(padded_frame);
-        num_frames += 1;
-    }
-
-    let mut interleaved_data = Vec::with_capacity(num_frames * num_filters * padding);
-
-    if major_column_order {
-        for frame_idx in 0..num_frames {
-            for filter_idx in 0..num_filters {
-                let frame_view = ArrayView2::from(&frames_with_padding[frame_idx]);
-                let frame_width = frame_view.shape()[1];
-                for x in 0..frame_width {
-                    interleaved_data.push(*frame_view.get((filter_idx, x)).unwrap() as f32);
-                }
-            }
-        }
-    } else {
-        // Interleave in major row order
-        for filter_idx in 0..num_filters {
-            for frame_idx in 0..num_frames {
-                let frame_view = ArrayView2::from(&frames_with_padding[frame_idx]);
-                let frame_width = frame_view.shape()[1];
-                for x in 0..frame_width {
-                    interleaved_data.push(*frame_view.get((filter_idx, x)).unwrap() as f32);
-                }
-            }
-        }
-    }
-
-    interleaved_data
-}
 
 /// Mel filterbanks, within 1.0e-7 of librosa and identical to whisper GGML model-embedded filters.
 pub fn mel(
@@ -241,6 +98,153 @@ pub fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
     let step = sr / n_fft as f64;
     let freqs: Array1<f64> = Array1::from_shape_fn(n_fft / 2 + 1, |i| step * i as f64);
     freqs
+}
+
+pub use log_mel_spectrogram as log10_mel_spectrogram;
+
+/// Compute a log-Mel spectrogram exactly as in the original OpenAI Whisper (whisper.py & whisper.cpp):
+pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
+    let mut mags: Vec<f64> = stft
+        .iter()
+        .map(|v| v.norm_sqr())
+        .take(stft.len() / 2)
+        .collect();
+    mags.push(0.0);
+    let mat = Array2::from_shape_vec((1, mags.len()), mags).unwrap();
+    let epsilon = 1e-10;
+    mel_filters
+        .dot(&mat.t())
+        .mapv(|sum| (sum.max(epsilon)).log10())
+}
+
+/// Compute a log-Mel spectrogram using the torchaudio/NeMo convention:
+/// This matches NeMo’s AudioToMelSpectrogramPreprocessor default (`log_zero_guard_type="add"`,  
+/// `log_zero_guard_value=2**-24`, natural log).
+pub fn ln_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
+    let mut mags: Vec<f64> = stft
+        .iter()
+        .map(|v| v.norm_sqr())
+        .take(stft.len() / 2)
+        .collect();
+    mags.push(0.0);
+    let mat = Array2::from_shape_vec((1, mags.len()), mags).unwrap();
+    let zero_guard = 2f64.powi(-24);
+    mel_filters.dot(&mat.t()).mapv(|x| (x + zero_guard).ln())
+}
+
+/// Perform “per_feature” (per-Mel-band) normalization exactly as torchaudio/NeMo does:
+/// This is equivalent to PyTorch’s `F.layer_norm` or NeMo’s `normalize="per_feature"`.
+pub fn normalize_per_feature(mut mel: Array2<f64>) -> Array2<f64> {
+    let zero_guard = 2f64.powi(-24);
+    let eps = 1e-5;
+    let t = mel.shape()[1] as f64;
+
+    for mut row in mel.axis_iter_mut(Axis(0)) {
+        let mean = row.sum() / t;
+        let var = row.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / (t - 1.0);
+        let std = (var.max(zero_guard)).sqrt();
+        row.mapv_inplace(|v| (v - mean) / (std + eps));
+    }
+
+    mel
+}
+
+/// Implements the “clamp-and-scale” post-processing first introduced in the
+/// original OpenAI Whisper reference (whisper.py) and mirrored in whisper.cpp:
+pub fn norm_mel(mel_spec: &Array2<f64>) -> Array2<f64> {
+    let mmax = mel_spec.fold(f64::NEG_INFINITY, |acc, x| acc.max(*x));
+    let mmax = mmax - 8.0;
+    let clamped: Array2<f64> = mel_spec.mapv(|x| (x.max(mmax) + 4.0) / 4.0);
+
+    clamped
+}
+
+pub fn norm_mel_vec(mel_spec: &[f32]) -> Vec<f32> {
+    let mmax = mel_spec
+        .iter()
+        .fold(f32::NEG_INFINITY, |acc, &x| acc.max(x));
+    let mmax = mmax - 8.0;
+    let clamped: Vec<f32> = mel_spec
+        .iter()
+        .map(|&x| ((x.max(mmax) + 4.0) / 4.0) as f32)
+        .collect();
+
+    clamped
+}
+
+/// Interleave a mel spectrogram
+///
+/// Required for creating images or passing to `whisper.cpp`
+///
+/// Major column order: for waterfall representations where each row is a single time frame.
+/// Major row order: interleaved such that each row represents a different frequency band,
+/// and each column represents a time step.
+///
+/// The default is *major row order* - whisper.cpp expects this.
+pub fn interleave_frames(
+    frames: &[Array2<f64>],
+    major_column_order: bool,
+    min_width: usize,
+) -> Vec<f32> {
+    let mut num_frames = frames.len();
+
+    assert!(num_frames > 0, "frames is empty");
+    assert!(min_width % 2 == 0, "min_width must be even");
+
+    let num_filters = frames[0].shape()[0];
+
+    let mut frames = frames.to_vec();
+
+    // Ensure an even number of frames by padding with a zeroed frame if necessary
+    // *important* mel spectrograms must have even number of columns, otherwise
+    // whisper model will give random results.
+    if min_width > 0 && num_frames % 2 != 0 {
+        frames.push(Array2::from_shape_fn((num_filters, 1), |(_, _)| 0.0));
+        num_frames += 1;
+    }
+
+    // Calculate the combined width along Axis(1) of all frames
+    let combined_width: usize = frames.iter().map(|frame| frame.shape()[1]).sum();
+
+    // Determine the required padding
+    let padding = min_width.saturating_sub(combined_width);
+
+    // Create a new Array2 with the required padding
+    let padded_frame = Array2::from_shape_fn((num_filters, padding), |(_, _)| 0.0);
+
+    // Insert the padded frame to the end of the frames array if padding is needed
+    let mut frames_with_padding = frames.to_vec();
+    if padding > 0 {
+        frames_with_padding.push(padded_frame);
+        num_frames += 1;
+    }
+
+    let mut interleaved_data = Vec::with_capacity(num_frames * num_filters * padding);
+
+    if major_column_order {
+        for frame_idx in 0..num_frames {
+            for filter_idx in 0..num_filters {
+                let frame_view = ArrayView2::from(&frames_with_padding[frame_idx]);
+                let frame_width = frame_view.shape()[1];
+                for x in 0..frame_width {
+                    interleaved_data.push(*frame_view.get((filter_idx, x)).unwrap() as f32);
+                }
+            }
+        }
+    } else {
+        // Interleave in major row order
+        for filter_idx in 0..num_filters {
+            for frame_idx in 0..num_frames {
+                let frame_view = ArrayView2::from(&frames_with_padding[frame_idx]);
+                let frame_width = frame_view.shape()[1];
+                for x in 0..frame_width {
+                    interleaved_data.push(*frame_view.get((filter_idx, x)).unwrap() as f32);
+                }
+            }
+        }
+    }
+
+    interleaved_data
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 pub mod config;
 pub mod mel;
-pub mod prelude;
+pub mod pcm;
 pub mod quant;
-pub mod rb;
 pub mod stft;
+pub mod streamer;
 pub mod vad;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

@@ -19,6 +19,10 @@ js-sys = { version = "^0.3", optional = true }
 wasm-bindgen = { version = "^0.2", optional = true }
 web-sys = { version = "^0.3", features = ['Worker'], optional = true }
 soundkit = { version = "0.11.0", features = ["wasm"], optional = true }
+regex = "1.11.1"
+rand = "0.9.1"
+rand_distr = "0.5.1"
+rtrb = "0.3.2"
 
 
 [dev-dependencies]
