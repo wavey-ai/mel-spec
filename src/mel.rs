@@ -1,3 +1,4 @@
+use crate::config::MelNorm;
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
 
@@ -9,7 +10,7 @@ pub fn mel(
     f_min: Option<f64>,
     f_max: Option<f64>,
     htk: bool,
-    norm: bool,
+    norm: MelNorm,
 ) -> Array2<f64> {
     let fftfreqs = fft_frequencies(sr, n_fft);
     let f_min: f64 = f_min.unwrap_or(0.0); // Minimum frequency
@@ -37,10 +38,12 @@ pub fn mel(
             });
     }
 
-    if norm {
-        // Slaney-style mel is scaled to be approx constant energy per channel
-        let enorm = 2.0 / (&mel_f.slice(s![2..n_mels + 2]) - &mel_f.slice(s![..n_mels]));
-        weights *= &enorm.insert_axis(Axis(1));
+    match norm {
+        MelNorm::Slaney => {
+            // Slaney-style mel is scaled to be approx constant energy per channel
+            let enorm = 2.0 / (&mel_f.slice(s![2..n_mels + 2]) - &mel_f.slice(s![..n_mels]));
+            weights *= &enorm.insert_axis(Axis(1));
+        }
     }
 
     weights
@@ -334,7 +337,7 @@ mod tests {
         let mut npz = NpzReader::new(f).unwrap();
         let filters: Array2<f32> = npz.by_index(0).unwrap();
         let want: Array2<f64> = filters.mapv(|x| f64::from(x));
-        let got = mel(16000.0, 400, 80, None, None, false, true);
+        let got = mel(16000.0, 400, 80, None, None, false, MelNorm::Slaney);
         assert_eq!(got.shape(), vec![80, 201]);
         for i in 0..80 {
             assert_nearby!(got.row(i), want.row(i), 1.0e-7);
@@ -353,7 +356,7 @@ mod tests {
         let want: Array2<f64> = filters_f32.mapv(f64::from);
 
         // Compute our mel filterbanks independently
-        let got = mel(16000.0, 512, 80, None, None, false, true);
+        let got = mel(16000.0, 512, 80, None, None, false, MelNorm::Slaney);
 
         assert_eq!(got.shape(), want.shape());
 
@@ -367,12 +370,21 @@ mod tests {
         let fft_size = 400;
         let sampling_rate = 16000.0;
         let n_mels = 80;
-        let mut stage = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
-        // Example input data for the FFT
+        // synthesize a constant-magnitude FFT input
         let fft_input = Array1::from(vec![Complex::new(1.0, 0.0); fft_size]);
-        // Add the FFT data to the MelSpectrogram
-        let mel_spec = stage.add(&fft_input);
-        // Ensure that the output Mel spectrogram has the correct shape
+        // build mel filterbank directly
+        let filters = mel(
+            sampling_rate,
+            fft_size,
+            n_mels,
+            None,
+            None,
+            false,
+            MelNorm::Slaney,
+        );
+        // compute log-mel spectrogram using ln (NeMo style)
+        let mel_spec = ln_mel_spectrogram(&fft_input, &filters);
+        // should be [n_mels, 1]
         assert_eq!(mel_spec.shape(), &[n_mels, 1]);
     }
 }

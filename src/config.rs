@@ -46,8 +46,8 @@ pub trait MelConfig {
     fn log_type(&self) -> LogType;
     fn log_zero_guard_type(&self) -> LogZeroGuardType;
     fn log_zero_guard_value(&self) -> f32;
-    fn lowfreq(&self) -> f32;
-    fn highfreq(&self) -> Option<f32>;
+    fn lowfreq(&self) -> Option<f64>;
+    fn highfreq(&self) -> Option<f64>;
     fn pad_to(&self) -> usize;
     fn pad_value(&self) -> f32;
     fn exact_pad(&self) -> bool;
@@ -83,8 +83,8 @@ pub struct NemoConfig {
     pub exact_pad: bool,
     pub pad_to: usize,
     pub pad_value: f32,
-    pub lowfreq: f32,
-    pub highfreq: Option<f32>,
+    pub lowfreq: Option<f64>,
+    pub highfreq: Option<f64>,
     pub log_type: LogType,
     pub log_zero_guard_type: LogZeroGuardType,
     pub log_zero_guard_value: f32,
@@ -116,7 +116,7 @@ impl Default for NemoConfig {
             exact_pad: false,
             pad_to: 16,
             pad_value: 0.0,
-            lowfreq: 0.0,
+            lowfreq: None,
             highfreq: None,
             log_type: LogType::Ln,
             log_zero_guard_type: LogZeroGuardType::Add,
@@ -175,10 +175,10 @@ impl MelConfig for NemoConfig {
     fn log_zero_guard_value(&self) -> f32 {
         self.log_zero_guard_value
     }
-    fn lowfreq(&self) -> f32 {
+    fn lowfreq(&self) -> Option<f64> {
         self.lowfreq
     }
-    fn highfreq(&self) -> Option<f32> {
+    fn highfreq(&self) -> Option<f64> {
         self.highfreq
     }
     fn pad_to(&self) -> usize {
@@ -290,10 +290,10 @@ impl MelConfig for WhisperConfig {
     fn log_zero_guard_value(&self) -> f32 {
         self.log_zero_guard_value
     }
-    fn lowfreq(&self) -> f32 {
-        0.0
+    fn lowfreq(&self) -> Option<f64> {
+        None
     }
-    fn highfreq(&self) -> Option<f32> {
+    fn highfreq(&self) -> Option<f64> {
         None
     }
     fn pad_to(&self) -> usize {

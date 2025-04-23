@@ -22,25 +22,20 @@ pub struct MelStreamer<C: MelConfig> {
 impl<C: MelConfig + Clone> MelStreamer<C> {
     /// Create a new MelStreamer with the given config and sample-capacity
     pub fn new(config: C, capacity: usize) -> Self {
-        let hop = config.n_window_stride();
-        let fft_size = config.n_fft();
-        let sr = config.sample_rate() as f32;
-        let n_mels = config.features();
-
         let (producer, consumer) = Rtrb::new(capacity);
-        let accumulated_samples = Vec::with_capacity(hop);
+        let accumulated_samples = Vec::with_capacity(config.n_window_stride());
 
         let filters = mel(
             config.sample_rate(),
             config.n_fft(),
             config.features(),
-            None,
-            None,
+            config.lowfreq(),
+            config.highfreq(),
             false,
-            true,
+            config.mel_norm(),
         );
 
-        let fft = stft::Spectrogram::new(fft_size, hop);
+        let fft = stft::Spectrogram::new(config.n_fft(), config.n_window_stride());
 
         Self {
             producer,
