@@ -107,12 +107,10 @@ pub use log_mel_spectrogram as log10_mel_spectrogram;
 
 /// Compute a log-Mel spectrogram exactly as in the original OpenAI Whisper (whisper.py & whisper.cpp):
 pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
-    let mut mags: Vec<f64> = stft
-        .iter()
-        .map(|v| v.norm_sqr())
-        .take(stft.len() / 2)
-        .collect();
-    mags.push(0.0);
+    // RealFFT already gives us the right half of the spectrum (fft_size/2 + 1 values)
+    // No need to take only half of stft like before
+    let mags: Vec<f64> = stft.iter().map(|v| v.norm_sqr()).collect();
+
     let mat = Array2::from_shape_vec((1, mags.len()), mags).unwrap();
     let epsilon = 1e-10;
     mel_filters
@@ -121,15 +119,13 @@ pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64
 }
 
 /// Compute a log-Mel spectrogram using the torchaudio/NeMo convention:
-/// This matches NeMo’s AudioToMelSpectrogramPreprocessor default (`log_zero_guard_type="add"`,  
+/// This matches NeMo's AudioToMelSpectrogramPreprocessor default (`log_zero_guard_type="add"`,  
 /// `log_zero_guard_value=2**-24`, natural log).
 pub fn ln_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
-    let mut mags: Vec<f64> = stft
-        .iter()
-        .map(|v| v.norm_sqr())
-        .take(stft.len() / 2)
-        .collect();
-    mags.push(0.0);
+    // RealFFT already gives us the right half of the spectrum (fft_size/2 + 1 values)
+    // No need to take only half of stft like before
+    let mags: Vec<f64> = stft.iter().map(|v| v.norm_sqr()).collect();
+
     let mat = Array2::from_shape_vec((1, mags.len()), mags).unwrap();
     let zero_guard = 2f64.powi(-24);
     mel_filters.dot(&mat.t()).mapv(|x| (x + zero_guard).ln())

@@ -23,6 +23,8 @@ regex = "1.11.1"
 rand = "0.9.1"
 rand_distr = "0.5.1"
 rtrb = "0.3.2"
+realfft = "3.4.0"
+num-complex = "0.4.6"
 
 
 [dev-dependencies]

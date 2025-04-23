@@ -1,12 +1,13 @@
 use ndarray::Array1;
-use num::Complex;
-use rustfft::{Fft, FftPlanner};
+use num_complex::Complex;
+use realfft::{RealFftPlanner, RealToComplex};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
 pub struct Spectrogram {
-    complex_buf: Vec<Complex<f64>>,
-    fft: Arc<dyn Fft<f64>>,
+    real_buf: Vec<f64>,
+    output_buf: Vec<Complex<f64>>,
+    r2c: Arc<dyn RealToComplex<f64>>,
     fft_size: usize,
     idx: u64,
     hop_buf: Vec<f64>,
@@ -23,8 +24,14 @@ pub struct Spectrogram {
 ///     - neither is necessary unless you are running additional analysis.
 impl Spectrogram {
     pub fn new(fft_size: usize, hop_size: usize) -> Self {
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(fft_size);
+        let mut planner = RealFftPlanner::new();
+        let r2c = planner.plan_fft_forward(fft_size);
+        
+        // Create output buffer that's the right size for real FFT 
+        // (fft_size/2 + 1 complex values)
+        let mut output_buf = r2c.make_output_vec();
+        let scratch_buf = r2c.make_scratch_vec();
+        
         // Hann window
         let window: Vec<f64> = (0..fft_size)
             .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
@@ -32,13 +39,14 @@ impl Spectrogram {
         let idx = 0;
 
         Self {
-            complex_buf: vec![Complex::new(0.0, 0.0); fft_size],
-            fft,
+            real_buf: vec![0.0; fft_size],
+            output_buf,
+            r2c,
             fft_size,
             idx,
             hop_buf: vec![0.0; fft_size],
             hop_size,
-            scratch_buf: vec![Complex::new(0.0, 0.0); fft_size],
+            scratch_buf,
             window,
         }
     }
@@ -64,22 +72,26 @@ impl Spectrogram {
         self.idx = self.idx.wrapping_add(pcm_size as u64);
 
         if self.idx >= fft_size as u64 {
-            let windowed_samples: Vec<f64> = self
-                .hop_buf
-                .iter()
-                .enumerate()
-                .map(|(j, val)| val * self.window[j])
-                .collect();
+            // Apply window directly to real_buf
+            for i in 0..fft_size {
+                self.real_buf[i] = self.hop_buf[i] * self.window[i];
+            }
 
-            self.complex_buf
-                .iter_mut()
-                .zip(windowed_samples.iter())
-                .for_each(|(c, val)| *c = Complex::new(*val, 0.0));
+            // Process with realfft
+            self.r2c.process_with_scratch(
+                &mut self.real_buf, 
+                &mut self.output_buf, 
+                &mut self.scratch_buf
+            ).unwrap();
 
-            self.fft
-                .process_with_scratch(&mut self.complex_buf, &mut self.scratch_buf);
-
-            Some(Array1::from_vec(self.complex_buf.clone()))
+            // Convert the output to a format compatible with existing code
+            // Since realfft only returns fft_size/2 + 1 complex values, we need to
+            // convert it to match the original format expected by downstream code
+            
+            // Note: We're returning the output_buf directly instead of padding it to match
+            // the original complex FFT output size. The mel_spectrogram functions will need
+            // to be adjusted accordingly.
+            Some(Array1::from_vec(self.output_buf.clone()))
         } else {
             None
         }
@@ -106,8 +118,12 @@ mod tests {
         let fft_frame = spectrogram.add(&frames);
         // None as we have added 7 frames and fft size is 8
         assert!(fft_frame.is_none());
+        
         let frames: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
         let fft_frame = spectrogram.add(&frames);
         assert!(fft_frame.is_some());
+        
+        // Check that the output length is now fft_size/2 + 1 instead of fft_size
+        assert_eq!(fft_frame.unwrap().len(), fft_size/2 + 1);
     }
 }

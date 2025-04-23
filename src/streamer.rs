@@ -122,7 +122,7 @@ mod tests {
     use crate::config::NemoConfig;
     use crate::mel::interleave_frames;
     use crate::quant::save_tga_8bit;
-    use ndarray::{s, Array2, concatenate, Axis};
+    use ndarray::{concatenate, s, Array2, Axis};
     use ndarray_npy::{read_npy, write_npy};
     use soundkit::{
         audio_bytes::{deinterleave_vecs_f32, deinterleave_vecs_i16},
@@ -186,8 +186,6 @@ mod tests {
         let files: Vec<PathBuf> = find_wav_files(dir);
         assert!(!files.is_empty(), "No WAV files found");
 
-        let mut all_frames: Vec<Array2<f64>> = Vec::new();
-
         for path in files {
             let file_start = Instant::now();
 
@@ -203,8 +201,7 @@ mod tests {
                 }
                 if let Ok(Some(data)) = proc.add(&buf[..n]) {
                     let i16s = deinterleave_vecs_i16(data.data(), 1);
-                    let floats: Vec<f32> =
-                        i16s[0].iter().map(|&s| s as f32 / 32768.0).collect();
+                    let floats: Vec<f32> = i16s[0].iter().map(|&s| s as f32 / 32768.0).collect();
                     stream.add_frame(&floats);
                     while let Some(mel_frame) = stream.maybe_mel() {
                         frames.push(mel_frame);
@@ -212,7 +209,11 @@ mod tests {
                 }
             }
             frames.extend(stream.close());
-            all_frames.extend(frames);
+
+            let flattened = interleave_frames(&frames, false, 0);
+            let filename = path.file_stem().unwrap().to_string_lossy();
+            let output_path = out.join(format!("{}.tga", filename));
+            save_tga_8bit(&flattened, config.features(), output_path.to_str().unwrap()).unwrap();
 
             let file_duration_ms = file_start.elapsed().as_millis();
             println!(
@@ -222,19 +223,11 @@ mod tests {
             );
         }
 
-        // combine all per-file frames
-        let views: Vec<_> = all_frames.iter().map(|m| m.view()).collect();
-        let mut full = concatenate(Axis(1), &views).unwrap();
-        full = crate::mel::normalize_per_feature(full);
-
-        let reint: Vec<Array2<f64>> = (0..full.shape()[1])
-            .map(|t| full.slice(s![.., t]).to_owned().insert_axis(Axis(1)))
-            .collect();
-        let flat = interleave_frames(&reint, false, 0);
-        save_tga_8bit(&flat, config.features(), "./harvard_export.tga").unwrap();
-
         let total_duration_ms = test_start.elapsed().as_millis();
-        println!("test_harvard_wavs_to_tga total took {} ms", total_duration_ms);
+        println!(
+            "test_harvard_wavs_to_tga all sentences took {} ms",
+            total_duration_ms
+        );
     }
 
     #[test]
@@ -287,4 +280,3 @@ mod tests {
         wav
     }
 }
-
