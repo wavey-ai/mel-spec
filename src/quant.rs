@@ -35,7 +35,7 @@ pub fn tga_8bit(data: &[f32], n_mels: usize) -> Vec<Vec<u8>> {
     result
 }
 
-fn tga_8bit_data(data: &[f32], n_mels: usize) -> Vec<u8> {
+pub fn tga_8bit_data(data: &[f32], n_mels: usize) -> Vec<u8> {
     // Quantize the floating-point data to 8-bit grayscale
     let (tga_data, range) = quantize(&data.to_vec());
 
