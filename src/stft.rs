@@ -2,10 +2,10 @@ use ndarray::Array1;
 use num::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::f64::consts::PI;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
+
+#[cfg(all(feature = "cuda", test))]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "cuda")]
 use cuda::CudaPlan;
@@ -67,6 +67,111 @@ impl Spectrogram {
         s.cuda_plan = Some(plan);
         s.use_cuda = true;
         Ok(s)
+    }
+
+    /// Process all audio samples at once with batched GPU FFT.
+    /// Returns all FFT frames as a single Vec.
+    /// This is much faster than calling add() per frame because:
+    /// - Single memory transfer to GPU
+    /// - Batched cuFFT execution
+    /// - Single memory transfer back
+    #[cfg(feature = "cuda")]
+    pub fn compute_all_cuda(
+        samples: &[f32],
+        fft_size: usize,
+        hop_size: usize,
+    ) -> Result<Vec<Vec<Complex<f64>>>, StftError> {
+        use std::f64::consts::PI;
+
+        // Calculate number of frames
+        if samples.len() < fft_size {
+            return Ok(Vec::new());
+        }
+        let num_frames = (samples.len() - fft_size) / hop_size + 1;
+        if num_frames == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Create Hann window
+        let window: Vec<f64> = (0..fft_size)
+            .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
+            .collect();
+
+        // Prepare all windowed frames
+        let mut all_windowed: Vec<f64> = Vec::with_capacity(num_frames * fft_size);
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * hop_size;
+            for i in 0..fft_size {
+                let sample = if start + i < samples.len() {
+                    samples[start + i] as f64
+                } else {
+                    0.0
+                };
+                all_windowed.push(sample * window[i]);
+            }
+        }
+
+        // Create batched CUDA plan
+        let mut plan = CudaPlan::new_batch(fft_size, num_frames)?;
+
+        // Execute batched FFT
+        let result = plan.execute_batch(&all_windowed, num_frames)?;
+
+        // Split result into frames
+        let frames: Vec<Vec<Complex<f64>>> = result
+            .chunks(fft_size)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        Ok(frames)
+    }
+
+    /// Process all audio samples at once (CPU version).
+    /// Returns all FFT frames. Use this for fair comparison with compute_all_cuda.
+    pub fn compute_all_cpu(
+        samples: &[f32],
+        fft_size: usize,
+        hop_size: usize,
+    ) -> Vec<Vec<Complex<f64>>> {
+        use rustfft::FftPlanner;
+
+        if samples.len() < fft_size {
+            return Vec::new();
+        }
+        let num_frames = (samples.len() - fft_size) / hop_size + 1;
+        if num_frames == 0 {
+            return Vec::new();
+        }
+
+        // Create Hann window
+        let window: Vec<f64> = (0..fft_size)
+            .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
+            .collect();
+
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(fft_size);
+        let mut scratch = vec![Complex::new(0.0, 0.0); fft_size];
+
+        let mut frames_out = Vec::with_capacity(num_frames);
+
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * hop_size;
+            let mut complex_buf: Vec<Complex<f64>> = (0..fft_size)
+                .map(|i| {
+                    let sample = if start + i < samples.len() {
+                        samples[start + i] as f64
+                    } else {
+                        0.0
+                    };
+                    Complex::new(sample * window[i], 0.0)
+                })
+                .collect();
+
+            fft.process_with_scratch(&mut complex_buf, &mut scratch);
+            frames_out.push(complex_buf);
+        }
+
+        frames_out
     }
 
     /// Takes a single channel of audio (non-interleaved, mono, f32).
