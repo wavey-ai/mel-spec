@@ -1,5 +1,7 @@
 # Mel Spec
 
+[![CI](https://github.com/wavey-ai/mel-spec/actions/workflows/ci.yml/badge.svg)](https://github.com/wavey-ai/mel-spec/actions/workflows/ci.yml)
+
 A Rust implementation of mel spectrograms with support for:
 - **Whisper-compatible** mel spectrograms (aligned with whisper.cpp, PyTorch, librosa)
 - **Kaldi-compatible** filterbank features (matching kaldi_native_fbank output)
