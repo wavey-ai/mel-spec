@@ -156,6 +156,40 @@ Fleeting word - VAD correctly detects:
 
 Full JFK transcript with VAD: [jfk_transcript_golden.txt](doc/jfk_transcript_golden.txt)
 
+## Performance
+
+### CPU Performance
+
+Benchmarks on Apple M1 Pro (single-threaded, release build):
+
+| Audio Length | Frames | Time | Throughput |
+|-------------|--------|------|------------|
+| 10s | 997 | 21ms | 476x realtime |
+| 60s | 5997 | 124ms | 484x realtime |
+| 300s (5 min) | 29997 | 622ms | 482x realtime |
+
+Full mel spectrogram pipeline (STFT + mel filterbank + log) at 16kHz, FFT size 512, hop 160, 80 mel bins.
+
+**CPU performance is excellent** - processing 5 minutes of audio in 622ms means the library is ~480x faster than realtime on a single core.
+
+### GPU Acceleration
+
+This library focuses on pure Rust CPU implementation. For GPU acceleration, consider:
+
+| Option | Speedup | Notes |
+|--------|---------|-------|
+| **NVIDIA NeMo** | ~10x over CPU | Python/PyTorch, uses cuBLAS/cuDNN, best for batch processing |
+| **torchaudio** | ~5-10x | Python/PyTorch, CUDA backend |
+| **mel-spec gpu branch** | ~1.6x | Experimental, requires CUDA toolkit + nvcc |
+
+**Recommendation:** For most use cases, CPU performance is sufficient. If GPU acceleration is critical:
+
+1. **Batch processing** → Use NeMo or torchaudio (Python)
+2. **Rust + GPU** → The experimental `gpu` branch exists but adds build complexity (C++ CUDA kernels, NVIDIA-only) for modest gains
+3. **Future** → Pure Rust GPU via wgpu/rust-gpu when ecosystem matures
+
+The experimental GPU branch demonstrates ~1.6x speedup by keeping the full pipeline on GPU (STFT → mel filterbank → log), but requires the CUDA toolkit and is not recommended for production use. The branch demonstrates the architecture works, but the juice isn't worth the squeeze for a Rust library.
+
 ## Discussion
 
 * Mel spectrograms encode at 6.4KB/sec (80 x 2 bytes x 40 frames)
