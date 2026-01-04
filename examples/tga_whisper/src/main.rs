@@ -3,7 +3,7 @@ use structopt::StructOpt;
 use whisper_rs::*;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "mel_spec_example", about = "mel_spec whisper example app")]
+#[structopt(name = "tga_whisper", about = "Transcribe from a TGA mel spectrogram")]
 struct Command {
     #[structopt(
         short,
@@ -20,8 +20,9 @@ fn main() {
     let model_path = args.model_path;
     let tga_path = args.tga_path;
 
-    let params = WhisperContextParameters::default();
-    let ctx = WhisperContext::new_with_params(&model_path, params).expect("failed to load model");
+    let ctx_params = WhisperContextParameters::default();
+    let ctx =
+        WhisperContext::new_with_params(&model_path, ctx_params).expect("failed to load model");
     let mut state = ctx.create_state().expect("failed to create state");
     let mel = load_tga_8bit(&tga_path).unwrap();
 
@@ -34,18 +35,17 @@ fn main() {
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
 
+    // Set the pre-computed mel spectrogram and run inference with empty samples.
+    // This workflow is supported by whisper.cpp PR #1214 and our whisper-rs fork.
     state.set_mel(&mel).unwrap();
-    let empty = vec![];
-    state.full(params, &empty[..]).unwrap();
+    state.full(params, &[]).unwrap();
 
     let num_segments = state.full_n_segments().unwrap();
-    println!("Got {}", num_segments);
+    println!("Got {} segments", num_segments);
 
-    if num_segments > 0 {
-        if let Ok(text) = state.full_get_segment_text(0) {
+    for i in 0..num_segments {
+        if let Ok(text) = state.full_get_segment_text(i) {
             println!("{}", text);
-        } else {
-            println!("Error retrieving text for segment.");
         }
     }
 }

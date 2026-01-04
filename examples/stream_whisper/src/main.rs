@@ -120,10 +120,9 @@ fn main() {
                     params.set_print_realtime(false);
                     params.set_print_timestamps(false);
 
+                    // Set mel and run inference with empty samples (uses pre-computed mel)
                     state.set_mel(&interleaved).unwrap();
-
-                    let empty: Vec<f32> = vec![];
-                    state.full(params, &empty[..]).unwrap();
+                    state.full(params, &[]).unwrap();
 
                     let num_segments = state.full_n_segments().unwrap();
                     if num_segments > 0 {
@@ -156,10 +155,9 @@ fn main() {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
 
+        // Set mel and run inference with empty samples (uses pre-computed mel)
         state.set_mel(&interleaved).unwrap();
-
-        let empty: Vec<f32> = vec![];
-        state.full(params, &empty[..]).unwrap();
+        state.full(params, &[]).unwrap();
 
         let num_segments = state.full_n_segments().unwrap();
         if num_segments > 0 {
