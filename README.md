@@ -182,13 +182,13 @@ This library focuses on pure Rust CPU implementation. For GPU acceleration, cons
 | **torchaudio** | ~5-10x | Python/PyTorch, CUDA backend |
 | **mel-spec gpu branch** | ~1.6x | Experimental, requires CUDA toolkit + nvcc |
 
-**Recommendation:** For most use cases, CPU performance is sufficient. If GPU acceleration is critical:
+**Options:**
 
-1. **Batch processing** → Use NeMo or torchaudio (Python)
-2. **Rust + GPU** → The experimental `gpu` branch exists but adds build complexity (C++ CUDA kernels, NVIDIA-only) for modest gains
-3. **Future** → Pure Rust GPU via wgpu/rust-gpu when ecosystem matures
+1. **NeMo / torchaudio** → Python/PyTorch with CUDA, best for batch processing
+2. **gpu branch** → Experimental CUDA support (~1.6x speedup), requires CUDA toolkit + nvcc
+3. **wgpu/rust-gpu** → Pure Rust GPU (ecosystem maturing)
 
-The experimental GPU branch demonstrates ~1.6x speedup by keeping the full pipeline on GPU (STFT → mel filterbank → log), but requires the CUDA toolkit and is not recommended for production use. The branch demonstrates the architecture works, but the juice isn't worth the squeeze for a Rust library.
+The `gpu` branch keeps the full pipeline on GPU (STFT → mel filterbank → log). Requires C++ CUDA kernels and NVIDIA hardware.
 
 ## Discussion
 
