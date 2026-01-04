@@ -1,18 +1,41 @@
-# Audio to interoperable TARGA Mel Spectrograms
+# mel_tga - Audio to Mel Spectrogram TGA
 
-These spectrograms are like a photographic negative as far as Whisper is
-concerned, they can be saved, spliced and played back by whisper.cpp.
+Converts audio to mel spectrograms and saves them as TGA image files. These spectrograms are like a photographic negative - they can be saved, spliced, and played back by whisper.cpp for transcription without the original audio.
+
+## Building
 
 ```sh
-cargo build && ffmpeg -hide_banner -loglevel error -i ../../testdata/JFKWHA-001-AU_WR.mp3 -f f32le -ar 16000 -acodec pcm_f32le -ac 1 pipe:1  | ./target/debug/mel_tga
+cargo build --release
 ```
 
-Will output .tga files chunking them if the width exceeds `u16::MAX` which is
-the max TARGA width supported by their u16 headers.
+## Usage
+
+Pipe raw f32le audio (16kHz mono) via stdin:
+
+```sh
+ffmpeg -i input.wav -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/mel_tga
+```
+
+Or from an MP3:
+
+```sh
+ffmpeg -i audio.mp3 -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/mel_tga
+```
+
+### Options
+
+- `-o, --out-path <path>` - Output directory (default: `./mel_out`)
+
+### Output
+
+Will output `.tga` files, chunking them if the width exceeds `u16::MAX` (the max TARGA width supported by their u16 headers):
 
 ```
-out_chunk0.tga	out_chunk1.tga
+out_chunk0.tga  out_chunk1.tga
 ```
 
-As we require the width before writing the header, this example buffers the
-entire output and waits for the pipe to close before writing the tga files.
+## Notes
+
+- Input must be raw f32le audio at 16kHz mono sample rate
+- The example buffers the entire output and waits for the pipe to close before writing TGA files
+- TGA files can be transcribed using `tga_whisper`

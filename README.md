@@ -3,11 +3,6 @@
 A Rust implementation of mel spectrograms aligned to the results from the
 whisper.cpp, pytorch librosa and NeMo reference implementations.
 
-Sep 21st: I'm in the process of fixing examples in particular whisper-rs
-integration.
-
-The browser example is currently working if selecting microphone input.
-
 ## Examples:
 
 See [wavey-ai/hush](https://github.com/wavey-ai/hush) for live demo
