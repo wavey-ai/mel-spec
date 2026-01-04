@@ -20,8 +20,9 @@ fn main() {
     let model_path = args.model_path;
     let tga_path = args.tga_path;
 
-    let ctx = WhisperContext::new(&model_path).expect("failed to load model");
-    let mut state = ctx.create_state().expect("failed to create key");
+    let params = WhisperContextParameters::default();
+    let ctx = WhisperContext::new_with_params(&model_path, params).expect("failed to load model");
+    let mut state = ctx.create_state().expect("failed to create state");
     let mel = load_tga_8bit(&tga_path).unwrap();
 
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });

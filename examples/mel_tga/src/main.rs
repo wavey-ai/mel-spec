@@ -1,9 +1,6 @@
 use mel_spec::prelude::*;
-use mel_spec_audio::packet::deinterleave_vecs_f32;
-use mel_spec_pipeline::pipeline::*;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::thread;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -15,6 +12,14 @@ struct Command {
     out_dir: String,
 }
 
+/// Deinterleave bytes to f32 samples (mono, little-endian f32)
+fn bytes_to_f32_samples(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
 fn main() {
     let args = Command::from_args();
     let out_dir = args.out_dir;
@@ -23,68 +28,48 @@ fn main() {
     let hop_size = 160;
     let n_mels = args.mels;
     let sampling_rate = 16000.0;
-    let mel_settings = MelConfig::new(fft_size, hop_size, n_mels, sampling_rate);
-    let vad_config = DetectionSettings::new(1.0, 3, 6, 0);
-    let audio_config = AudioConfig::new(32, 16000.0);
-    let config = PipelineConfig::new(audio_config, mel_settings, vad_config);
 
-    let mut pipeline = Pipeline::new(config);
+    // Initialize processing stages
+    let mut stft = Spectrogram::new(fft_size, hop_size);
+    let mut mel = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
 
-    let rx_clone = pipeline.mel_rx();
-    let mut handles = pipeline.start();
+    // Buffer for accumulating mel frames
+    let mut mel_frames: Vec<ndarray::Array2<f64>> = Vec::new();
 
-    let handle = thread::spawn(move || {
-        let mut mels = Vec::new();
-        while let Ok(mel) = rx_clone.recv() {
-            mels.push(mel.frame().to_owned());
-        }
-
-        dbg!("saving");
-        let frames = interleave_frames(&mels, false, 100);
-        for (i, tga) in tga_8bit(&frames, n_mels).iter().enumerate() {
-            let path = format!("{}/out_chunk{}.tga", out_dir, i);
-            let mut file = File::create(path).unwrap();
-            file.write_all(&tga).unwrap();
-        }
-    });
-
-    handles.push(handle);
-
-    // read audio from pipe
-    const LEN: usize = 128;
+    // Read audio from stdin
+    const CHUNK_SIZE: usize = 640; // 160 samples * 4 bytes per f32
     let mut input: Box<dyn Read> = Box::new(io::stdin());
+    let mut buffer = vec![0u8; CHUNK_SIZE];
 
-    let mut buffer = [0; LEN];
-    let mut bytes_read = 0;
     loop {
-        match input.read(&mut buffer[bytes_read..]) {
-            Ok(0) => break,
-            Ok(n) => bytes_read += n,
-            Err(error) => {
-                eprintln!("Error reading input: {}", error);
+        match input.read_exact(&mut buffer) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => {
+                eprintln!("Error reading input: {}", e);
                 std::process::exit(1);
             }
         }
 
-        if bytes_read == LEN {
-            let samples = deinterleave_vecs_f32(&buffer, 1);
-            for chunk in samples[0].chunks(LEN / 4) {
-                let _ = pipeline.send_pcm(chunk);
-            }
-            bytes_read = 0;
+        let samples = bytes_to_f32_samples(&buffer);
+
+        // Process through STFT
+        if let Some(fft_frame) = stft.add(&samples) {
+            // Process through Mel filterbank
+            let mel_frame = mel.add(&fft_frame);
+            mel_frames.push(mel_frame);
         }
     }
 
-    if bytes_read > 0 {
-        let samples = deinterleave_vecs_f32(&buffer[..bytes_read], 1);
-        for chunk in samples[0].chunks(bytes_read / 4) {
-            let _ = pipeline.send_pcm(chunk);
+    // Save output as TGA files
+    if !mel_frames.is_empty() {
+        eprintln!("Saving {} mel frames", mel_frames.len());
+        let frames = interleave_frames(&mel_frames, false, 100);
+        for (i, tga) in tga_8bit(&frames, n_mels).iter().enumerate() {
+            let path = format!("{}/out_chunk{}.tga", out_dir, i);
+            let mut file = File::create(&path).unwrap();
+            file.write_all(tga).unwrap();
+            eprintln!("Wrote {}", path);
         }
-    }
-
-    pipeline.close_ingress();
-
-    for handle in handles {
-        handle.join().unwrap();
     }
 }
