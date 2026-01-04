@@ -172,7 +172,7 @@ impl Spectrogram {
 
         // Create mel filterbank on CPU, then upload to GPU
         let mel_filters = crate::mel::mel(sampling_rate, fft_size, n_mels, None, None, false, true);
-        let mel_filters_vec: Vec<f64> = mel_filters.into_raw_vec();
+        let (mel_filters_vec, _offset): (Vec<f64>, _) = mel_filters.into_raw_vec_and_offset();
 
         // Create batched CUDA plan for FFT
         let plan = CudaPlan::new_batch(fft_size, num_frames)?;
@@ -549,9 +549,9 @@ pub(crate) mod cuda {
         pub plan: CufftHandle,
         pub stream: CudaStream,
         pub d_buf: *mut CufftDoubleComplex,
-        h_buf: *mut CufftDoubleComplex,
-        fft_size: usize,
-        batch: usize,
+        pub h_buf: *mut CufftDoubleComplex,
+        pub fft_size: usize,
+        pub batch: usize,
     }
 
     impl CudaPlan {
