@@ -126,6 +126,145 @@ impl Spectrogram {
         Ok(frames)
     }
 
+    /// Compute full mel spectrogram on GPU (STFT + mel filterbank + log).
+    /// This is the proper way to use GPU - keep all data on GPU until final output.
+    /// Only transfers small mel features (n_mels per frame) back to CPU.
+    ///
+    /// Returns mel spectrogram as Vec<Vec<f64>> where each inner Vec is n_mels values.
+    #[cfg(feature = "cuda")]
+    pub fn compute_mel_spectrogram_cuda(
+        samples: &[f32],
+        fft_size: usize,
+        hop_size: usize,
+        n_mels: usize,
+        sampling_rate: f64,
+    ) -> Result<Vec<Vec<f64>>, StftError> {
+        use std::f64::consts::PI;
+        use std::ffi::c_void;
+        use std::mem::size_of;
+
+        if samples.len() < fft_size {
+            return Ok(Vec::new());
+        }
+        let num_frames = (samples.len() - fft_size) / hop_size + 1;
+        if num_frames == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Create Hann window
+        let window: Vec<f64> = (0..fft_size)
+            .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
+            .collect();
+
+        // Prepare all windowed frames on CPU
+        let mut all_windowed: Vec<f64> = Vec::with_capacity(num_frames * fft_size);
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * hop_size;
+            for i in 0..fft_size {
+                let sample = if start + i < samples.len() {
+                    samples[start + i] as f64
+                } else {
+                    0.0
+                };
+                all_windowed.push(sample * window[i]);
+            }
+        }
+
+        // Create mel filterbank on CPU, then upload to GPU
+        let mel_filters = crate::mel::mel(sampling_rate, fft_size, n_mels, None, None, false, true);
+        let mel_filters_vec: Vec<f64> = mel_filters.into_raw_vec();
+
+        // Create batched CUDA plan for FFT
+        let plan = CudaPlan::new_batch(fft_size, num_frames)?;
+
+        // Allocate device memory for mel filterbank
+        let filter_bytes = mel_filters_vec.len() * size_of::<f64>();
+        let d_filters = cuda::alloc_device(filter_bytes)?;
+
+        // Allocate device memory for mel output
+        let mel_output_bytes = num_frames * n_mels * size_of::<f64>();
+        let d_mel_out = cuda::alloc_device(mel_output_bytes)?;
+
+        // Allocate pinned host memory for mel output
+        let h_mel_out = cuda::alloc_host(mel_output_bytes)? as *mut f64;
+
+        // Upload mel filterbank to GPU
+        cuda::memcpy_h2d_async(
+            d_filters,
+            mel_filters_vec.as_ptr() as *const c_void,
+            filter_bytes,
+            plan.stream(),
+        )?;
+
+        // Upload windowed frames to GPU and execute FFT
+        let host_slice = unsafe {
+            std::slice::from_raw_parts_mut(plan.h_buf, fft_size * num_frames)
+        };
+        for (i, chunk) in all_windowed.chunks(fft_size).enumerate() {
+            let offset = i * fft_size;
+            for (j, &v) in chunk.iter().enumerate() {
+                host_slice[offset + j].x = v;
+                host_slice[offset + j].y = 0.0;
+            }
+        }
+
+        let byte_len = fft_size * num_frames * size_of::<cuda::CufftDoubleComplex>();
+        cuda::memcpy_h2d_async(
+            plan.d_buf as *mut c_void,
+            host_slice.as_ptr() as *const c_void,
+            byte_len,
+            plan.stream(),
+        )?;
+
+        // Execute batched FFT (in-place)
+        let exec = unsafe {
+            cuda::cufftExecZ2Z(plan.plan, plan.d_buf, plan.d_buf, cuda::CUFFT_FORWARD)
+        };
+        if exec != cuda::CUFFT_SUCCESS {
+            cuda::free_device(d_filters);
+            cuda::free_device(d_mel_out);
+            cuda::free_host(h_mel_out as *mut c_void);
+            return Err(StftError::Cuda("cufftExecZ2Z failed".into()));
+        }
+
+        // Launch mel kernel (FFT -> mel filterbank -> log10)
+        cuda::launch_mel(
+            plan.d_buf as *const c_void,
+            d_mel_out as *mut f64,
+            d_filters as *const f64,
+            num_frames,
+            fft_size,
+            n_mels,
+            plan.stream(),
+        )?;
+
+        // Copy mel output back to host
+        cuda::memcpy_d2h_async(
+            h_mel_out as *mut c_void,
+            d_mel_out,
+            mel_output_bytes,
+            plan.stream(),
+        )?;
+
+        // Synchronize
+        cuda::stream_sync(plan.stream())?;
+
+        // Convert to Vec<Vec<f64>>
+        let host_mel_slice = unsafe { std::slice::from_raw_parts(h_mel_out, num_frames * n_mels) };
+        let mut result = Vec::with_capacity(num_frames);
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * n_mels;
+            result.push(host_mel_slice[start..start + n_mels].to_vec());
+        }
+
+        // Cleanup
+        cuda::free_device(d_filters);
+        cuda::free_device(d_mel_out);
+        cuda::free_host(h_mel_out as *mut c_void);
+
+        Ok(result)
+    }
+
     /// Process all audio samples at once (CPU version).
     /// Returns all FFT frames. Use this for fair comparison with compute_all_cuda.
     pub fn compute_all_cpu(
@@ -172,6 +311,80 @@ impl Spectrogram {
         }
 
         frames_out
+    }
+
+    /// Compute full mel spectrogram on CPU (STFT + mel filterbank + log).
+    /// Use this for fair comparison with compute_mel_spectrogram_cuda.
+    ///
+    /// Returns mel spectrogram as Vec<Vec<f64>> where each inner Vec is n_mels values.
+    pub fn compute_mel_spectrogram_cpu(
+        samples: &[f32],
+        fft_size: usize,
+        hop_size: usize,
+        n_mels: usize,
+        sampling_rate: f64,
+    ) -> Vec<Vec<f64>> {
+        use rustfft::FftPlanner;
+
+        if samples.len() < fft_size {
+            return Vec::new();
+        }
+        let num_frames = (samples.len() - fft_size) / hop_size + 1;
+        if num_frames == 0 {
+            return Vec::new();
+        }
+
+        // Create Hann window
+        let window: Vec<f64> = (0..fft_size)
+            .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
+            .collect();
+
+        // Create mel filterbank
+        let mel_filters = crate::mel::mel(sampling_rate, fft_size, n_mels, None, None, false, true);
+
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(fft_size);
+        let mut scratch = vec![Complex::new(0.0, 0.0); fft_size];
+
+        let bins = fft_size / 2 + 1;
+        let mut result = Vec::with_capacity(num_frames);
+
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * hop_size;
+            let mut complex_buf: Vec<Complex<f64>> = (0..fft_size)
+                .map(|i| {
+                    let sample = if start + i < samples.len() {
+                        samples[start + i] as f64
+                    } else {
+                        0.0
+                    };
+                    Complex::new(sample * window[i], 0.0)
+                })
+                .collect();
+
+            fft.process_with_scratch(&mut complex_buf, &mut scratch);
+
+            // Compute magnitude squared for first half + 1 bins
+            let magnitudes: Vec<f64> = complex_buf[..bins]
+                .iter()
+                .map(|c| c.re * c.re + c.im * c.im)
+                .collect();
+
+            // Apply mel filterbank and log10
+            let mut mel_frame = Vec::with_capacity(n_mels);
+            for mel_idx in 0..n_mels {
+                let mut sum = 0.0;
+                for (bin_idx, &mag) in magnitudes.iter().enumerate() {
+                    sum += mag * mel_filters[[mel_idx, bin_idx]];
+                }
+                // Apply floor and log10 (matching CUDA kernel)
+                let log_val = sum.max(1e-10).log10();
+                mel_frame.push(log_val);
+            }
+            result.push(mel_frame);
+        }
+
+        result
     }
 
     /// Takes a single channel of audio (non-interleaved, mono, f32).
