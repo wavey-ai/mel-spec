@@ -9,7 +9,7 @@ readme = "README.md"
 [dependencies]
 mel_spec = { path = "../.." }
 ndarray = "0.16.1"
-whisper-rs = { git = "https://github.com/wavey-ai/whisper-rs.git", branch = "set-mel-support" }
+whisper-rs = { git = "https://github.com/wavey-ai/whisper-rs.git" }
 structopt = "0.3.26"
 
 [[bin]]
