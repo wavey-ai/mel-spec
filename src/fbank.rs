@@ -1,18 +1,16 @@
 //! Kaldi-style filterbank feature extraction.
 //!
-//! This module provides filterbank features inspired by Kaldi's `fbank` implementation.
-//! Note: This is an approximation and may not exactly match kaldi_native_fbank output.
-//! For exact kaldi compatibility (e.g., for WeSpeaker/pyannote models), consider using
-//! a TorchScript-traced version of torchaudio.compliance.kaldi.fbank.
+//! This module provides filterbank features matching kaldi_native_fbank output.
 //!
 //! # Parameters (matching kaldi defaults)
 //! - `sample_rate`: 16000 Hz
 //! - `num_mel_bins`: 80
 //! - `frame_length_ms`: 25.0 ms (400 samples at 16kHz)
 //! - `frame_shift_ms`: 10.0 ms (160 samples at 16kHz)
-//! - `window_type`: hamming
+//! - `window_type`: povey (like hamming but goes to zero at edges)
 //! - `dither`: 0.0 (disabled for inference)
-//! - `energy_floor`: FLT_EPSILON
+//! - `preemphasis`: 0.97
+//! - `remove_dc_offset`: true
 
 use ndarray::Array2;
 use num::Complex;
@@ -28,7 +26,7 @@ pub struct FbankConfig {
     pub frame_length_ms: f64,
     pub frame_shift_ms: f64,
     pub dither: f64,
-    /// Kaldi uses a very small floor (FLT_EPSILON ≈ 1.19e-7).
+    /// Energy floor for log computation (kaldi default: 0.0, uses FLT_EPSILON internally)
     pub energy_floor: f64,
     pub use_energy: bool,
     pub use_log_fbank: bool,
@@ -37,6 +35,10 @@ pub struct FbankConfig {
     pub preemphasis: f64,
     /// If true, apply CMN (subtract mean across time for each frequency bin).
     pub apply_cmn: bool,
+    /// Low frequency cutoff for mel filterbank (kaldi default: 20.0)
+    pub low_freq: f64,
+    /// High frequency cutoff (0.0 means Nyquist)
+    pub high_freq: f64,
 }
 
 impl Default for FbankConfig {
@@ -47,12 +49,14 @@ impl Default for FbankConfig {
             frame_length_ms: 25.0,
             frame_shift_ms: 10.0,
             dither: 0.0,
-            energy_floor: 1.19209e-7, // FLT_EPSILON
+            energy_floor: 0.0, // kaldi default
             use_energy: false,
             use_log_fbank: true,
             use_power: true,
             preemphasis: 0.97,
             apply_cmn: true,
+            low_freq: 20.0,
+            high_freq: 0.0, // 0 means Nyquist
         }
     }
 }
@@ -88,16 +92,27 @@ impl Fbank {
         let fft_size = config.fft_size();
         let frame_len = config.frame_length_samples();
 
-        // Hamming window (kaldi default)
+        // Povey window: like hamming but goes to zero at edges
+        // Formula: pow(0.5 - 0.5*cos(2*PI*i/(N-1)), 0.85)
         let window: Vec<f64> = (0..frame_len)
-            .map(|i| 0.54 - 0.46 * (2.0 * PI * i as f64 / (frame_len - 1) as f64).cos())
+            .map(|i| {
+                let a = 2.0 * PI * i as f64 / (frame_len - 1) as f64;
+                (0.5 - 0.5 * a.cos()).powf(0.85)
+            })
             .collect();
 
         // Mel filterbank
+        let high_freq = if config.high_freq == 0.0 {
+            config.sample_rate / 2.0
+        } else {
+            config.high_freq
+        };
         let mel_filters = kaldi_mel_filterbank(
             config.sample_rate,
             fft_size,
             config.num_mel_bins,
+            config.low_freq,
+            high_freq,
         );
 
         let mut planner = FftPlanner::new();
@@ -188,7 +203,13 @@ impl Fbank {
                 }
 
                 // Apply energy floor and log
-                mel_energy = mel_energy.max(self.config.energy_floor);
+                // Kaldi uses FLT_EPSILON (f32::EPSILON ≈ 1.19e-7) as minimum to avoid log(0)
+                let floor = if self.config.energy_floor > 0.0 {
+                    self.config.energy_floor
+                } else {
+                    f32::EPSILON as f64 // ~1.19e-7, matches kaldi FLT_EPSILON
+                };
+                mel_energy = mel_energy.max(floor);
                 if self.config.use_log_fbank {
                     mel_energy = mel_energy.ln();
                 }
@@ -219,21 +240,19 @@ impl Fbank {
 
 /// Create Kaldi-style mel filterbank.
 ///
-/// Uses HTK-style mel scale (different from librosa's Slaney scale).
+/// Uses Kaldi mel scale: mel = 1127 * ln(1 + hz/700)
 /// Filters are NOT area-normalized (matching kaldi default).
 fn kaldi_mel_filterbank(
     sample_rate: f64,
     fft_size: usize,
     num_mel_bins: usize,
+    low_freq: f64,
+    high_freq: f64,
 ) -> Array2<f64> {
     let num_fft_bins = fft_size / 2 + 1;
-    let nyquist = sample_rate / 2.0;
 
-    // Mel frequency range (kaldi uses 20Hz as low frequency by default)
-    let low_freq = 20.0;
-    let high_freq = nyquist;
-    let mel_low = hz_to_mel_htk(low_freq);
-    let mel_high = hz_to_mel_htk(high_freq);
+    let mel_low = hz_to_mel(low_freq);
+    let mel_high = hz_to_mel(high_freq);
 
     // Mel bin edges (num_mel_bins + 2 for triangular filters)
     let mel_points: Vec<f64> = (0..=num_mel_bins + 1)
@@ -241,36 +260,31 @@ fn kaldi_mel_filterbank(
         .collect();
 
     // Convert mel points back to Hz
-    let hz_points: Vec<f64> = mel_points.iter().map(|&m| mel_to_hz_htk(m)).collect();
+    let hz_points: Vec<f64> = mel_points.iter().map(|&m| mel_to_hz(m)).collect();
 
-    // Convert Hz to FFT bin indices (floating point for interpolation)
-    let bin_points: Vec<f64> = hz_points
-        .iter()
-        .map(|&hz| (hz * fft_size as f64 / sample_rate).floor())
-        .collect();
-
-    // Build triangular filters
+    // Build triangular filters using continuous frequency values
+    // Each FFT bin corresponds to a frequency: bin_freq = bin_idx * sample_rate / fft_size
     let mut filters = Array2::zeros((num_mel_bins, num_fft_bins));
 
     for mel_idx in 0..num_mel_bins {
-        let left = bin_points[mel_idx];
-        let center = bin_points[mel_idx + 1];
-        let right = bin_points[mel_idx + 2];
+        let left_hz = hz_points[mel_idx];
+        let center_hz = hz_points[mel_idx + 1];
+        let right_hz = hz_points[mel_idx + 2];
 
-        // Skip if the bins are too close
-        if center == left || right == center {
+        // Skip degenerate filters
+        if center_hz <= left_hz || right_hz <= center_hz {
             continue;
         }
 
         for freq_idx in 0..num_fft_bins {
-            let freq = freq_idx as f64;
+            let freq_hz = freq_idx as f64 * sample_rate / fft_size as f64;
 
-            if freq > left && freq <= center {
+            if freq_hz > left_hz && freq_hz <= center_hz {
                 // Rising edge
-                filters[[mel_idx, freq_idx]] = (freq - left) / (center - left);
-            } else if freq > center && freq < right {
+                filters[[mel_idx, freq_idx]] = (freq_hz - left_hz) / (center_hz - left_hz);
+            } else if freq_hz > center_hz && freq_hz < right_hz {
                 // Falling edge
-                filters[[mel_idx, freq_idx]] = (right - freq) / (right - center);
+                filters[[mel_idx, freq_idx]] = (right_hz - freq_hz) / (right_hz - center_hz);
             }
         }
     }
@@ -278,14 +292,16 @@ fn kaldi_mel_filterbank(
     filters
 }
 
-/// Convert Hz to Mel scale (HTK formula).
-fn hz_to_mel_htk(hz: f64) -> f64 {
-    2595.0 * (1.0 + hz / 700.0).log10()
+/// Convert Hz to Mel scale (Kaldi formula).
+/// mel = 1127 * ln(1 + hz/700)
+fn hz_to_mel(hz: f64) -> f64 {
+    1127.0 * (1.0 + hz / 700.0).ln()
 }
 
-/// Convert Mel to Hz scale (HTK formula).
-fn mel_to_hz_htk(mel: f64) -> f64 {
-    700.0 * (10.0_f64.powf(mel / 2595.0) - 1.0)
+/// Convert Mel to Hz scale (Kaldi formula).
+/// hz = 700 * (exp(mel/1127) - 1)
+fn mel_to_hz(mel: f64) -> f64 {
+    700.0 * ((mel / 1127.0).exp() - 1.0)
 }
 
 #[cfg(test)]
@@ -294,6 +310,38 @@ mod tests {
     use ndarray_npy::NpzReader;
     use std::fs::File;
     use std::io::Read;
+
+    /// Find the start of audio data in a WAV file by locating the "data" chunk.
+    /// Returns the byte offset where sample data begins.
+    fn find_wav_data_offset(wav_bytes: &[u8]) -> Option<usize> {
+        // WAV files have RIFF header (12 bytes) followed by chunks
+        // Each chunk: 4-byte ID + 4-byte size + data
+        if wav_bytes.len() < 12 {
+            return None;
+        }
+
+        let mut pos = 12; // Skip RIFF header
+        while pos + 8 <= wav_bytes.len() {
+            let chunk_id = &wav_bytes[pos..pos + 4];
+            let chunk_size = u32::from_le_bytes([
+                wav_bytes[pos + 4],
+                wav_bytes[pos + 5],
+                wav_bytes[pos + 6],
+                wav_bytes[pos + 7],
+            ]) as usize;
+
+            if chunk_id == b"data" {
+                return Some(pos + 8); // Data starts after chunk header
+            }
+
+            pos += 8 + chunk_size;
+            // Chunks are word-aligned (2-byte boundary)
+            if chunk_size % 2 != 0 {
+                pos += 1;
+            }
+        }
+        None
+    }
 
     #[test]
     fn test_fbank_config_defaults() {
@@ -306,19 +354,21 @@ mod tests {
     }
 
     #[test]
-    fn test_hz_to_mel_htk() {
-        // Test values from kaldi
-        assert!((hz_to_mel_htk(0.0) - 0.0).abs() < 1e-6);
-        assert!((hz_to_mel_htk(1000.0) - 1000.0).abs() < 1.0); // ~999.985
-        assert!((hz_to_mel_htk(8000.0) - 2840.0).abs() < 5.0);
+    fn test_hz_to_mel() {
+        // Test values: kaldi uses mel = 1127 * ln(1 + hz/700)
+        assert!((hz_to_mel(0.0) - 0.0).abs() < 1e-6);
+        // 1000 Hz -> 1127 * ln(1 + 1000/700) = 1127 * ln(2.4286) = 999.98
+        assert!((hz_to_mel(1000.0) - 999.98).abs() < 1.0);
+        // 8000 Hz -> 1127 * ln(1 + 8000/700) = 1127 * ln(12.4286) = 2840.02
+        assert!((hz_to_mel(8000.0) - 2840.0).abs() < 1.0);
     }
 
     #[test]
-    fn test_mel_to_hz_htk() {
+    fn test_mel_to_hz() {
         // Round-trip test
         for hz in [0.0, 500.0, 1000.0, 4000.0, 8000.0] {
-            let mel = hz_to_mel_htk(hz);
-            let hz_back = mel_to_hz_htk(mel);
+            let mel = hz_to_mel(hz);
+            let hz_back = mel_to_hz(mel);
             assert!((hz - hz_back).abs() < 1e-6, "Round-trip failed for Hz={}", hz);
         }
     }
@@ -361,8 +411,10 @@ mod tests {
         let mut wav_bytes = Vec::new();
         wav_file.read_to_end(&mut wav_bytes).unwrap();
 
-        // Skip WAV header (44 bytes for standard WAV)
-        let samples: Vec<f32> = wav_bytes[44..]
+        // Find the "data" chunk in WAV file (handles extended headers)
+        let data_offset = find_wav_data_offset(&wav_bytes)
+            .expect("Could not find 'data' chunk in WAV file");
+        let samples: Vec<f32> = wav_bytes[data_offset..]
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
@@ -431,5 +483,65 @@ mod tests {
         // Verify some variation in output (not all zeros or constant)
         let variance: f32 = computed.iter().map(|&x| x * x).sum::<f32>() / computed.len() as f32;
         assert!(variance > 0.1, "Output variance too low: {}", variance);
+    }
+
+    #[test]
+    fn debug_filterbank() {
+        let config = FbankConfig::default();
+        let fbank = Fbank::new(config);
+        
+        // Check filterbank weights
+        println!("\nFilterbank check:");
+        for mel_idx in 0..10 {
+            let row = fbank.mel_filters.row(mel_idx);
+            let sum: f64 = row.iter().sum();
+            let nonzero: usize = row.iter().filter(|&&x| x > 0.0).count();
+            println!("  Filter {}: sum={:.4}, nonzero_bins={}", mel_idx, sum, nonzero);
+        }
+        
+        // Check first few filter shapes
+        println!("\nFirst 3 filters (non-zero weights):");
+        for mel_idx in 0..3 {
+            let row = fbank.mel_filters.row(mel_idx);
+            print!("  Filter {}: ", mel_idx);
+            for (i, &w) in row.iter().enumerate() {
+                if w > 0.0 {
+                    print!("bin{}={:.3} ", i, w);
+                }
+            }
+            println!();
+        }
+    }
+
+    #[test]
+    fn debug_compute_steps() {
+        // Load audio
+        let mut wav_file = File::open("./testdata/jfk_f32le.wav").unwrap();
+        let mut wav_bytes = Vec::new();
+        wav_file.read_to_end(&mut wav_bytes).unwrap();
+        let data_offset = find_wav_data_offset(&wav_bytes)
+            .expect("Could not find 'data' chunk in WAV file");
+        let samples: Vec<f32> = wav_bytes[data_offset..]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        
+        println!("\nFirst 10 audio samples: {:?}", &samples[..10]);
+        
+        // Compute without CMN
+        let config = FbankConfig {
+            apply_cmn: false,
+            ..FbankConfig::default()
+        };
+        let fbank = Fbank::new(config);
+        let features = fbank.compute(&samples);
+        
+        println!("\nFrame 0 (silent), first 5 mel bins (no CMN):");
+        for i in 0..5 {
+            println!("  mel[{}]: {:.4}", i, features[[0, i]]);
+        }
+        
+        println!("\nExpected (from kaldi): -15.94 for all");
+        println!("f32::EPSILON: {:e}, ln(EPSILON): {:.4}", f32::EPSILON, (f32::EPSILON as f64).ln());
     }
 }
