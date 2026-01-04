@@ -1,4 +1,5 @@
 pub mod config;
+pub mod fbank;
 pub mod mel;
 pub mod prelude;
 pub mod quant;
