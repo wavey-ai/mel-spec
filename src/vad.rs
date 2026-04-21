@@ -1,5 +1,5 @@
 use image::{ImageBuffer, Rgb};
-use ndarray::{concatenate, s, Array, Array2, Axis};
+use ndarray::{concatenate, Array2, Axis};
 use std::collections::HashSet;
 
 #[derive(Copy, Clone, Default)]
@@ -76,7 +76,6 @@ impl DetectionSettings {
 pub struct VoiceActivityDetector {
     mel_buffer: Vec<Array2<f64>>,
     settings: DetectionSettings,
-    idx: usize,
 }
 
 impl VoiceActivityDetector {
@@ -86,31 +85,30 @@ impl VoiceActivityDetector {
         Self {
             mel_buffer,
             settings: settings.to_owned(),
-            idx: 0,
         }
     }
 
     /// Add Mel spectrogram - should be a single frame.
     pub fn add(&mut self, frame: &Array2<f64>) -> Option<bool> {
         let min_x = self.settings.min_x;
-        if self.idx == 128 {
-            self.mel_buffer = self.mel_buffer[(self.mel_buffer.len() - min_x)..].to_vec();
-            self.idx = min_x;
-        }
         self.mel_buffer.push(frame.to_owned());
-        self.idx += 1;
-        if self.idx < min_x {
+        let max_buffered_frames = min_x.max(128);
+        if self.mel_buffer.len() > max_buffered_frames {
+            let keep_from = self.mel_buffer.len().saturating_sub(min_x);
+            self.mel_buffer.drain(..keep_from);
+        }
+        if self.mel_buffer.len() < min_x {
             return None;
         }
 
         // check if we are at cutable frame position
-        let window = &self.mel_buffer[self.idx - min_x..];
+        let window = &self.mel_buffer[self.mel_buffer.len() - min_x..];
         let edge_info = vad_boundaries(&window, &self.settings);
-        let ni = edge_info.intersected();
-        if ni.is_empty() {
+        let intersected = &edge_info.intersected_columns;
+        if intersected.is_empty() {
             Some(false)
         } else {
-            Some(ni[0] == 0)
+            Some(intersected[0] == 0)
         }
     }
 }
@@ -143,50 +141,67 @@ pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
 }
 
 pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
-    let array_views: Vec<_> = frames.iter().map(|a| a.view()).collect();
-    let min_energy = settings.min_energy;
-    let min_y = settings.min_y;
-    let min_mel = settings.min_mel;
+    let Some(first_frame) = frames.first() else {
+        return EdgeInfo::new(Vec::new(), Vec::new(), HashSet::new());
+    };
 
-    // Concatenate the array views along the time (x) axis.
-    let merged_frames = concatenate(Axis(1), &array_views).unwrap();
-    let shape = merged_frames.raw_dim();
-    let width = shape[1];
-    let height = shape[0];
+    let height = first_frame.nrows();
+    let width: usize = frames
+        .iter()
+        .map(|frame| {
+            debug_assert_eq!(frame.nrows(), height);
+            frame.ncols()
+        })
+        .sum();
 
-    // Sobel kernels for edge detection.
-    let sobel_x =
-        Array::from_shape_vec((3, 3), vec![-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0])
-            .unwrap();
-    let sobel_y =
-        Array::from_shape_vec((3, 3), vec![-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0])
-            .unwrap();
+    if height < 3 || width < 3 {
+        return EdgeInfo::new(Vec::new(), Vec::new(), HashSet::new());
+    }
 
-    // Compute gradient magnitude for each valid (3x3) patch.
-    let gradient_mag = Array::from_shape_fn((height - 2, width - 2), |(y, x)| {
-        let view = merged_frames.slice(s![y..y + 3, x..x + 3]);
-        let mut gradient_x = 0.0;
-        let mut gradient_y = 0.0;
-        for j in 0..3 {
-            for i in 0..3 {
-                gradient_x += view[[j, i]] * sobel_x[[j, i]];
-                gradient_y += view[[j, i]] * sobel_y[[j, i]];
-            }
+    let mut raw_classification = vec![false; width - 2];
+    let min_energy_sq = settings.min_energy * settings.min_energy;
+
+    if frames.len() == 1 {
+        let frame = &frames[0];
+        let data = frame
+            .as_slice()
+            .expect("VAD expects contiguous spectrogram frames");
+        classify_columns_in_frame(
+            data,
+            frame.ncols(),
+            height,
+            settings.min_mel,
+            settings.min_y,
+            min_energy_sq,
+            &mut raw_classification,
+        );
+    } else {
+        let mut frame_infos = Vec::with_capacity(frames.len());
+        let mut column_sources = Vec::with_capacity(width);
+
+        for frame in frames {
+            let frame_index = frame_infos.len();
+            frame_infos.push(FrameInfo {
+                data: frame
+                    .as_slice()
+                    .expect("VAD expects contiguous spectrogram frames"),
+                width: frame.ncols(),
+            });
+            column_sources.extend((0..frame.ncols()).map(|local_x| ColumnSource {
+                frame_index,
+                local_x,
+            }));
         }
-        (gradient_x * gradient_x + gradient_y * gradient_y).sqrt()
-    });
 
-    // Build a raw binary classification for each column based on count of above-threshold pixels.
-    let mut raw_classification = Vec::with_capacity(width - 2);
-    for x in 0..(width - 2) {
-        let mut count = 0;
-        for y in 0..(height - 2) {
-            let grad = gradient_mag[(y, x)];
-            if y >= min_mel && grad >= min_energy {
-                count += 1;
-            }
-        }
-        raw_classification.push(count >= min_y);
+        classify_columns_across_frames(
+            &frame_infos,
+            &column_sources,
+            height,
+            settings.min_mel,
+            settings.min_y,
+            min_energy_sq,
+            &mut raw_classification,
+        );
     }
 
     // Apply temporal smoothing via a moving-window majority vote.
@@ -219,20 +234,147 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
 /// value to true if at least half of the values in that window are true.
 fn smooth_mask(mask: &[bool], window: usize) -> Vec<bool> {
     let n = mask.len();
+    let mut prefix_true = vec![0usize; n + 1];
+    for (i, &value) in mask.iter().enumerate() {
+        prefix_true[i + 1] = prefix_true[i] + usize::from(value);
+    }
+
     let mut smoothed = vec![false; n];
     for i in 0..n {
-        let start = if i < window { 0 } else { i - window };
-        let end = if i + window + 1 > n {
-            n
-        } else {
-            i + window + 1
-        };
-        let count_true = mask[start..end].iter().filter(|&&val| val).count();
+        let start = i.saturating_sub(window);
+        let end = (i + window + 1).min(n);
+        let count_true = prefix_true[end] - prefix_true[start];
         if count_true * 2 >= (end - start) {
             smoothed[i] = true;
         }
     }
     smoothed
+}
+
+struct FrameInfo<'a> {
+    data: &'a [f64],
+    width: usize,
+}
+
+#[derive(Copy, Clone)]
+struct ColumnSource {
+    frame_index: usize,
+    local_x: usize,
+}
+
+fn classify_columns_in_frame(
+    frame: &[f64],
+    width: usize,
+    height: usize,
+    min_mel: usize,
+    min_y: usize,
+    min_energy_sq: f64,
+    output: &mut [bool],
+) {
+    if min_y == 0 {
+        output.fill(true);
+        return;
+    }
+
+    let start_y = min_mel.min(height - 2);
+
+    for (x, is_active) in output.iter_mut().enumerate() {
+        let mut count = 0;
+
+        for y in start_y..(height - 2) {
+            let row0 = y * width;
+            let row1 = row0 + width;
+            let row2 = row1 + width;
+
+            let tl = frame[row0 + x];
+            let tc = frame[row0 + x + 1];
+            let tr = frame[row0 + x + 2];
+            let ml = frame[row1 + x];
+            let mr = frame[row1 + x + 2];
+            let bl = frame[row2 + x];
+            let bc = frame[row2 + x + 1];
+            let br = frame[row2 + x + 2];
+
+            if sobel_gradient_sq(tl, tc, tr, ml, mr, bl, bc, br) >= min_energy_sq {
+                count += 1;
+                if count >= min_y {
+                    *is_active = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn classify_columns_across_frames(
+    frames: &[FrameInfo<'_>],
+    columns: &[ColumnSource],
+    height: usize,
+    min_mel: usize,
+    min_y: usize,
+    min_energy_sq: f64,
+    output: &mut [bool],
+) {
+    if min_y == 0 {
+        output.fill(true);
+        return;
+    }
+
+    let start_y = min_mel.min(height - 2);
+
+    for (x, is_active) in output.iter_mut().enumerate() {
+        let c0 = columns[x];
+        let c1 = columns[x + 1];
+        let c2 = columns[x + 2];
+        let f0 = &frames[c0.frame_index];
+        let f1 = &frames[c1.frame_index];
+        let f2 = &frames[c2.frame_index];
+        let mut count = 0;
+
+        for y in start_y..(height - 2) {
+            let row00 = (y * f0.width) + c0.local_x;
+            let row01 = (y * f1.width) + c1.local_x;
+            let row02 = (y * f2.width) + c2.local_x;
+            let row10 = row00 + f0.width;
+            let row12 = row02 + f2.width;
+            let row20 = row10 + f0.width;
+            let row21 = row01 + (2 * f1.width);
+            let row22 = row12 + f2.width;
+
+            let tl = f0.data[row00];
+            let tc = f1.data[row01];
+            let tr = f2.data[row02];
+            let ml = f0.data[row10];
+            let mr = f2.data[row12];
+            let bl = f0.data[row20];
+            let bc = f1.data[row21];
+            let br = f2.data[row22];
+
+            if sobel_gradient_sq(tl, tc, tr, ml, mr, bl, bc, br) >= min_energy_sq {
+                count += 1;
+                if count >= min_y {
+                    *is_active = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn sobel_gradient_sq(
+    tl: f64,
+    tc: f64,
+    tr: f64,
+    ml: f64,
+    mr: f64,
+    bl: f64,
+    bc: f64,
+    br: f64,
+) -> f64 {
+    let gradient_x = (tr + (2.0 * mr) + br) - (tl + (2.0 * ml) + bl);
+    let gradient_y = (bl + (2.0 * bc) + br) - (tl + (2.0 * tc) + tr);
+    (gradient_x * gradient_x) + (gradient_y * gradient_y)
 }
 
 /// EdgeInfo is the result of Voice Activity Detection.
@@ -429,7 +571,7 @@ mod tests {
         let edge_info = vad_boundaries(&[frames.clone()], &settings);
 
         let elapsed = start.elapsed().as_millis();
-        dbg!(elapsed);
+        eprintln!("test_vad_debug elapsed={elapsed}ms");
         let img = as_image(
             &[frames.clone()],
             &edge_info.non_intersected(),
@@ -452,14 +594,13 @@ mod tests {
         let start = std::time::Instant::now();
         let file_path = "./testdata/quantized_mel_golden.tga";
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
-        dbg!(&dequantized_mel);
 
         let frames = to_array2(&dequantized_mel, n_mels);
 
         let edge_info = vad_boundaries(&[frames.clone()], &settings);
 
         let elapsed = start.elapsed().as_millis();
-        dbg!(elapsed);
+        eprintln!("test_vad_boundaries elapsed={elapsed}ms");
         let img = as_image(
             &[frames.clone()],
             &edge_info.non_intersected(),
@@ -496,6 +637,6 @@ mod tests {
             if let Some(_) = stage.add(&mel) {}
         }
         let elapsed = start.elapsed().as_millis();
-        dbg!(elapsed);
+        eprintln!("test_stage elapsed={elapsed}ms");
     }
 }

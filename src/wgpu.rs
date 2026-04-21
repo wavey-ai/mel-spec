@@ -230,13 +230,8 @@ impl WgpuMelSpectrogram {
             "bluestein_prepare_main",
             "bluestein prepare",
         );
-        let conjugate_pipeline = create_pipeline(
-            &device,
-            &shader,
-            &stage_bgl,
-            "conjugate_main",
-            "conjugate",
-        );
+        let conjugate_pipeline =
+            create_pipeline(&device, &shader, &stage_bgl, "conjugate_main", "conjugate");
         let bluestein_post_pipeline = create_pipeline(
             &device,
             &shader,
@@ -509,7 +504,8 @@ impl WgpuMelSpectrogram {
         max_invocations_per_dispatch: u32,
     ) -> ::wgpu::Buffer {
         let bitreverse_total = (num_frames * fft_size) as u32;
-        for dispatch_offset in (0..bitreverse_total).step_by(max_invocations_per_dispatch as usize) {
+        for dispatch_offset in (0..bitreverse_total).step_by(max_invocations_per_dispatch as usize)
+        {
             let chunk_invocations =
                 (bitreverse_total - dispatch_offset).min(max_invocations_per_dispatch);
             let bitreverse_uniforms = BitReverseUniforms {
@@ -583,24 +579,25 @@ impl WgpuMelSpectrogram {
                             usage: ::wgpu::BufferUsages::UNIFORM,
                         });
 
-                let stage_bind_group = self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
-                    label: Some("mel-spec stage bind group"),
-                    layout: &self.stage_bgl,
-                    entries: &[
-                        ::wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: src_buffer.as_entire_binding(),
-                        },
-                        ::wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: dst_buffer.as_entire_binding(),
-                        },
-                        ::wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: stage_uniform_buffer.as_entire_binding(),
-                        },
-                    ],
-                });
+                let stage_bind_group =
+                    self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
+                        label: Some("mel-spec stage bind group"),
+                        layout: &self.stage_bgl,
+                        entries: &[
+                            ::wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: src_buffer.as_entire_binding(),
+                            },
+                            ::wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: dst_buffer.as_entire_binding(),
+                            },
+                            ::wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: stage_uniform_buffer.as_entire_binding(),
+                            },
+                        ],
+                    });
 
                 dispatch_compute(
                     encoder,
@@ -731,13 +728,13 @@ impl WgpuMelSpectrogram {
                 num_frames: num_frames as u32,
                 dispatch_offset,
             };
-            let uniform_buffer = self
-                .device
-                .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
-                    label: Some("mel-spec bluestein prepare uniforms"),
-                    contents: bytemuck::bytes_of(&uniforms),
-                    usage: ::wgpu::BufferUsages::UNIFORM,
-                });
+            let uniform_buffer =
+                self.device
+                    .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
+                        label: Some("mel-spec bluestein prepare uniforms"),
+                        contents: bytemuck::bytes_of(&uniforms),
+                        usage: ::wgpu::BufferUsages::UNIFORM,
+                    });
             let bind_group = self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
                 label: Some("mel-spec bluestein prepare bind group"),
                 layout: &self.stage_bgl,
@@ -785,13 +782,13 @@ impl WgpuMelSpectrogram {
                 dispatch_offset,
                 _pad: 0,
             };
-            let uniform_buffer = self
-                .device
-                .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
-                    label: Some("mel-spec pointwise uniforms"),
-                    contents: bytemuck::bytes_of(&uniforms),
-                    usage: ::wgpu::BufferUsages::UNIFORM,
-                });
+            let uniform_buffer =
+                self.device
+                    .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
+                        label: Some("mel-spec pointwise uniforms"),
+                        contents: bytemuck::bytes_of(&uniforms),
+                        usage: ::wgpu::BufferUsages::UNIFORM,
+                    });
             let bind_group = self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
                 label: Some("mel-spec pointwise bind group"),
                 layout: &self.pointwise_bgl,
@@ -842,13 +839,13 @@ impl WgpuMelSpectrogram {
                 scale,
                 _pad: 0,
             };
-            let uniform_buffer = self
-                .device
-                .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
-                    label: Some("mel-spec conjugate uniforms"),
-                    contents: bytemuck::bytes_of(&uniforms),
-                    usage: ::wgpu::BufferUsages::UNIFORM,
-                });
+            let uniform_buffer =
+                self.device
+                    .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
+                        label: Some("mel-spec conjugate uniforms"),
+                        contents: bytemuck::bytes_of(&uniforms),
+                        usage: ::wgpu::BufferUsages::UNIFORM,
+                    });
             let bind_group = self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
                 label: Some("mel-spec conjugate bind group"),
                 layout: &self.stage_bgl,
@@ -899,13 +896,13 @@ impl WgpuMelSpectrogram {
                 _pad1: 0,
                 _pad2: 0,
             };
-            let uniform_buffer = self
-                .device
-                .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
-                    label: Some("mel-spec bluestein post uniforms"),
-                    contents: bytemuck::bytes_of(&uniforms),
-                    usage: ::wgpu::BufferUsages::UNIFORM,
-                });
+            let uniform_buffer =
+                self.device
+                    .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
+                        label: Some("mel-spec bluestein post uniforms"),
+                        contents: bytemuck::bytes_of(&uniforms),
+                        usage: ::wgpu::BufferUsages::UNIFORM,
+                    });
             let bind_group = self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
                 label: Some("mel-spec bluestein post bind group"),
                 layout: &self.stage_bgl,
@@ -1195,7 +1192,10 @@ mod tests {
             "GPU adapter: {} {} ({:?})",
             adapter.vendor, adapter.name, adapter.backend
         );
-        println!("GPU startup: {:.2} ms", startup_elapsed.as_secs_f64() * 1000.0);
+        println!(
+            "GPU startup: {:.2} ms",
+            startup_elapsed.as_secs_f64() * 1000.0
+        );
 
         for seconds in [10usize, 60usize, 300usize] {
             let sample_count = seconds * sampling_rate as usize;

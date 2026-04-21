@@ -183,7 +183,8 @@ impl Fbank {
             }
 
             // FFT
-            self.fft.process_with_scratch(&mut complex_buf, &mut scratch_buf);
+            self.fft
+                .process_with_scratch(&mut complex_buf, &mut scratch_buf);
 
             // Power spectrum (only positive frequencies)
             let mut power_spectrum = vec![0.0f64; fft_size / 2 + 1];
@@ -369,7 +370,11 @@ mod tests {
         for hz in [0.0, 500.0, 1000.0, 4000.0, 8000.0] {
             let mel = hz_to_mel(hz);
             let hz_back = mel_to_hz(mel);
-            assert!((hz - hz_back).abs() < 1e-6, "Round-trip failed for Hz={}", hz);
+            assert!(
+                (hz - hz_back).abs() < 1e-6,
+                "Round-trip failed for Hz={}",
+                hz
+            );
         }
     }
 
@@ -412,8 +417,8 @@ mod tests {
         wav_file.read_to_end(&mut wav_bytes).unwrap();
 
         // Find the "data" chunk in WAV file (handles extended headers)
-        let data_offset = find_wav_data_offset(&wav_bytes)
-            .expect("Could not find 'data' chunk in WAV file");
+        let data_offset =
+            find_wav_data_offset(&wav_bytes).expect("Could not find 'data' chunk in WAV file");
         let samples: Vec<f32> = wav_bytes[data_offset..]
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -435,9 +440,11 @@ mod tests {
 
         // Check shape matches - this IS required
         assert_eq!(
-            computed.shape()[0], golden_t.shape()[0],
+            computed.shape()[0],
+            golden_t.shape()[0],
             "Frame count mismatch: computed {} vs golden {}",
-            computed.shape()[0], golden_t.shape()[0]
+            computed.shape()[0],
+            golden_t.shape()[0]
         );
 
         // Compute differences (informational)
@@ -489,16 +496,19 @@ mod tests {
     fn debug_filterbank() {
         let config = FbankConfig::default();
         let fbank = Fbank::new(config);
-        
+
         // Check filterbank weights
         println!("\nFilterbank check:");
         for mel_idx in 0..10 {
             let row = fbank.mel_filters.row(mel_idx);
             let sum: f64 = row.iter().sum();
             let nonzero: usize = row.iter().filter(|&&x| x > 0.0).count();
-            println!("  Filter {}: sum={:.4}, nonzero_bins={}", mel_idx, sum, nonzero);
+            println!(
+                "  Filter {}: sum={:.4}, nonzero_bins={}",
+                mel_idx, sum, nonzero
+            );
         }
-        
+
         // Check first few filter shapes
         println!("\nFirst 3 filters (non-zero weights):");
         for mel_idx in 0..3 {
@@ -519,15 +529,15 @@ mod tests {
         let mut wav_file = File::open("./testdata/jfk_f32le.wav").unwrap();
         let mut wav_bytes = Vec::new();
         wav_file.read_to_end(&mut wav_bytes).unwrap();
-        let data_offset = find_wav_data_offset(&wav_bytes)
-            .expect("Could not find 'data' chunk in WAV file");
+        let data_offset =
+            find_wav_data_offset(&wav_bytes).expect("Could not find 'data' chunk in WAV file");
         let samples: Vec<f32> = wav_bytes[data_offset..]
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
-        
+
         println!("\nFirst 10 audio samples: {:?}", &samples[..10]);
-        
+
         // Compute without CMN
         let config = FbankConfig {
             apply_cmn: false,
@@ -535,13 +545,17 @@ mod tests {
         };
         let fbank = Fbank::new(config);
         let features = fbank.compute(&samples);
-        
+
         println!("\nFrame 0 (silent), first 5 mel bins (no CMN):");
         for i in 0..5 {
             println!("  mel[{}]: {:.4}", i, features[[0, i]]);
         }
-        
+
         println!("\nExpected (from kaldi): -15.94 for all");
-        println!("f32::EPSILON: {:e}, ln(EPSILON): {:.4}", f32::EPSILON, (f32::EPSILON as f64).ln());
+        println!(
+            "f32::EPSILON: {:e}, ln(EPSILON): {:.4}",
+            f32::EPSILON,
+            (f32::EPSILON as f64).ln()
+        );
     }
 }

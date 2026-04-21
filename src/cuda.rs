@@ -353,7 +353,8 @@ mod ffi {
                 return Err(CudaError::Runtime("cudaMemcpy H2D failed".into()));
             }
 
-            let exec_result = unsafe { cufftExecZ2Z(self.plan, self.d_buf, self.d_buf, CUFFT_FORWARD) };
+            let exec_result =
+                unsafe { cufftExecZ2Z(self.plan, self.d_buf, self.d_buf, CUFFT_FORWARD) };
             if exec_result != CUFFT_SUCCESS {
                 return Err(CudaError::Runtime("cufftExecZ2Z failed".into()));
             }
@@ -384,8 +385,13 @@ mod ffi {
 
     pub fn alloc_host(size: u64) -> Result<*mut c_void, CudaError> {
         let mut ptr: *mut c_void = ptr::null_mut();
-        let result =
-            unsafe { cudaHostAlloc(&mut ptr as *mut *mut c_void, size as usize, CUDA_HOST_ALLOC_DEFAULT) };
+        let result = unsafe {
+            cudaHostAlloc(
+                &mut ptr as *mut *mut c_void,
+                size as usize,
+                CUDA_HOST_ALLOC_DEFAULT,
+            )
+        };
         if result != CUDA_SUCCESS {
             return Err(CudaError::Runtime("cudaHostAlloc failed".into()));
         }
@@ -555,7 +561,10 @@ mod tests {
             }
         };
         let startup_elapsed = startup_begin.elapsed();
-        println!("CUDA startup: {:.2} ms", startup_elapsed.as_secs_f64() * 1000.0);
+        println!(
+            "CUDA startup: {:.2} ms",
+            startup_elapsed.as_secs_f64() * 1000.0
+        );
         println!("CUDA batch size: {}", cuda.max_frames_per_batch());
 
         for seconds in [10usize, 60usize, 300usize] {
@@ -660,7 +669,8 @@ mod tests {
                     Ok(wgpu_out) => {
                         let wgpu_elapsed = wgpu_begin.elapsed();
                         assert_eq!(cuda_out.len(), wgpu_out.len(), "frame count mismatch");
-                        let ratio = wgpu_elapsed.as_secs_f64() / cuda_elapsed.as_secs_f64().max(f64::EPSILON);
+                        let ratio = wgpu_elapsed.as_secs_f64()
+                            / cuda_elapsed.as_secs_f64().max(f64::EPSILON);
                         println!(
                             "{}s audio: wgpu {:.2} ms, CUDA speed ratio x{:.2}",
                             seconds,
