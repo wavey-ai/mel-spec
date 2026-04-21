@@ -190,6 +190,7 @@ This library still defaults to a pure Rust CPU implementation, but there is now 
 
 Current limitations:
 
+* CUDA support is available behind the `cuda` feature for NVIDIA systems; it uses cuFFT for STFT and a CUDA kernel for mel projection
 * Batched API only - this backend is not wired into the streaming `Spectrogram::add` path
 * Power-of-two FFT sizes use the staged GPU FFT path; non-power-of-two sizes such as Whisper's `400` use a Bluestein FFT path on GPU
 * Large native batches are internally split to stay within the GPU's storage-buffer binding limits
@@ -199,18 +200,19 @@ For other GPU options, consider:
 
 | Option | Speedup | Notes |
 |--------|---------|-------|
+| **Built-in `cuda` backend** | Experimental | NVIDIA-only, uses cuFFT directly so Whisper's `fft_size = 400` works without custom FFT code |
 | **Built-in `wgpu` backend** | Experimental | Native Rust, works on Metal/Vulkan/DX12 capable systems, including Whisper's `fft_size = 400` via Bluestein |
 | **NVIDIA NeMo** | ~10x over CPU | Python/PyTorch, uses cuBLAS/cuDNN, best for batch processing |
 | **torchaudio** | ~5-10x | Python/PyTorch, CUDA backend |
-| **mel-spec gpu branch** | ~1.6x | Experimental, requires CUDA toolkit + nvcc |
 
 **Options:**
 
-1. **Built-in `wgpu` backend** → Native Rust, experimental today, best if you want to run on Apple Silicon or other non-CUDA GPUs
-2. **NeMo / torchaudio** → Python/PyTorch with CUDA, best for batch processing
-3. **gpu branch** → Experimental CUDA support (~1.6x speedup), requires CUDA toolkit + nvcc
+1. **Built-in `cuda` backend** → Best fit for NVIDIA Linux boxes where cuFFT is available and you want the most direct path to fast `fft_size = 400`
+2. **Built-in `wgpu` backend** → Native Rust, experimental today, best if you want to run on Apple Silicon or other non-CUDA GPUs
+3. **NeMo / torchaudio** → Python/PyTorch with CUDA, best for batch processing
+4. **TensorRT / ORT TensorRT EP** → Useful for model inference, but not a simpler replacement for mel preprocessing
 
-The historical `gpu` branch keeps the full pipeline on GPU (STFT → mel filterbank → log), but it is CUDA-only and requires NVIDIA hardware.
+The historical `gpu` branch has effectively been superseded by the in-tree `cuda` feature and the native `wgpu` backend.
 
 ## Discussion
 

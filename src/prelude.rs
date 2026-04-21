@@ -1,4 +1,6 @@
 pub use crate::config::MelConfig;
+#[cfg(all(feature = "cuda", not(target_arch = "wasm32")))]
+pub use crate::cuda::CudaMelSpectrogram;
 pub use crate::mel::interleave_frames;
 pub use crate::mel::MelSpectrogram;
 pub use crate::quant::load_tga_8bit;

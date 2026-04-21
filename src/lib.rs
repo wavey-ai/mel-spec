@@ -1,4 +1,6 @@
 pub mod config;
+#[cfg(all(feature = "cuda", not(target_arch = "wasm32")))]
+pub mod cuda;
 pub mod fbank;
 pub mod mel;
 pub mod prelude;
