@@ -176,21 +176,41 @@ Full mel spectrogram pipeline (STFT + mel filterbank + log) at 16kHz, FFT size 5
 
 ### GPU Acceleration
 
-This library focuses on pure Rust CPU implementation. For GPU acceleration, consider:
+This library still defaults to a pure Rust CPU implementation, but there is now an experimental native `wgpu` backend for batched mel spectrogram generation on GPU-capable native systems.
+
+```rust
+#[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
+{
+    use mel_spec::wgpu::WgpuMelSpectrogram;
+
+    let gpu = WgpuMelSpectrogram::new(512, 160, 16_000.0, 80)?;
+    let mel = gpu.compute_mel_spectrogram(&samples)?;
+}
+```
+
+Current limitations:
+
+* Batched API only - this backend is not wired into the streaming `Spectrogram::add` path
+* Power-of-two FFT sizes use the staged GPU FFT path; non-power-of-two sizes such as Whisper's `400` use a Bluestein FFT path on GPU
+* Large native batches are internally split to stay within the GPU's storage-buffer binding limits
+* The GPU path currently uses `f32`, so expect small numeric drift versus the CPU's `f64` path
+
+For other GPU options, consider:
 
 | Option | Speedup | Notes |
 |--------|---------|-------|
+| **Built-in `wgpu` backend** | Experimental | Native Rust, works on Metal/Vulkan/DX12 capable systems, including Whisper's `fft_size = 400` via Bluestein |
 | **NVIDIA NeMo** | ~10x over CPU | Python/PyTorch, uses cuBLAS/cuDNN, best for batch processing |
 | **torchaudio** | ~5-10x | Python/PyTorch, CUDA backend |
 | **mel-spec gpu branch** | ~1.6x | Experimental, requires CUDA toolkit + nvcc |
 
 **Options:**
 
-1. **NeMo / torchaudio** → Python/PyTorch with CUDA, best for batch processing
-2. **gpu branch** → Experimental CUDA support (~1.6x speedup), requires CUDA toolkit + nvcc
-3. **wgpu/rust-gpu** → Pure Rust GPU (ecosystem maturing)
+1. **Built-in `wgpu` backend** → Native Rust, experimental today, best if you want to run on Apple Silicon or other non-CUDA GPUs
+2. **NeMo / torchaudio** → Python/PyTorch with CUDA, best for batch processing
+3. **gpu branch** → Experimental CUDA support (~1.6x speedup), requires CUDA toolkit + nvcc
 
-The `gpu` branch keeps the full pipeline on GPU (STFT → mel filterbank → log). Requires C++ CUDA kernels and NVIDIA hardware.
+The historical `gpu` branch keeps the full pipeline on GPU (STFT → mel filterbank → log), but it is CUDA-only and requires NVIDIA hardware.
 
 ## Discussion
 

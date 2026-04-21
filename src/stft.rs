@@ -84,6 +84,88 @@ impl Spectrogram {
             None
         }
     }
+
+    /// Process all samples at once and return FFT frames in natural order.
+    pub fn compute_all_cpu(
+        samples: &[f32],
+        fft_size: usize,
+        hop_size: usize,
+    ) -> Vec<Vec<Complex<f64>>> {
+        if samples.len() < fft_size {
+            return Vec::new();
+        }
+
+        let window = hann_window(fft_size);
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(fft_size);
+        let mut scratch = vec![Complex::new(0.0, 0.0); fft_size];
+        let mut frames_out = Vec::new();
+
+        for windowed in frame_windows(samples, fft_size, hop_size, &window) {
+            let mut complex_buf: Vec<Complex<f64>> = windowed
+                .into_iter()
+                .map(|sample| Complex::new(sample, 0.0))
+                .collect();
+
+            fft.process_with_scratch(&mut complex_buf, &mut scratch);
+            frames_out.push(complex_buf);
+        }
+
+        frames_out
+    }
+
+    /// Compute a mel spectrogram using the current CPU path but in a batched API
+    /// that matches the GPU backend's shape and framing semantics.
+    pub fn compute_mel_spectrogram_cpu(
+        samples: &[f32],
+        fft_size: usize,
+        hop_size: usize,
+        n_mels: usize,
+        sampling_rate: f64,
+    ) -> Vec<Vec<f32>> {
+        let filters = crate::mel::mel(sampling_rate, fft_size, n_mels, None, None, false, true);
+        let frames = Self::compute_all_cpu(samples, fft_size, hop_size);
+        let mut out = Vec::with_capacity(frames.len());
+
+        for frame in frames {
+            let frame = Array1::from_vec(frame);
+            let mel = crate::mel::log_mel_spectrogram(&frame, &filters);
+            let row: Vec<f32> = mel.iter().map(|v| *v as f32).collect();
+            out.push(crate::mel::norm_mel_vec(&row));
+        }
+
+        out
+    }
+}
+
+pub(crate) fn hann_window(fft_size: usize) -> Vec<f64> {
+    (0..fft_size)
+        .map(|i| 0.5 * (1.0 - f64::cos((2.0 * PI * i as f64) / fft_size as f64)))
+        .collect()
+}
+
+pub(crate) fn frame_windows(
+    samples: &[f32],
+    fft_size: usize,
+    hop_size: usize,
+    window: &[f64],
+) -> Vec<Vec<f64>> {
+    if samples.len() < fft_size {
+        return Vec::new();
+    }
+
+    let num_frames = (samples.len() - fft_size) / hop_size + 1;
+    let mut frames = Vec::with_capacity(num_frames);
+
+    for frame_idx in 0..num_frames {
+        let start = frame_idx * hop_size;
+        let windowed = (0..fft_size)
+            .map(|i| samples[start + i] as f64 * window[i])
+            .collect();
+        frames.push(windowed);
+    }
+
+    frames
 }
 
 #[cfg(test)]

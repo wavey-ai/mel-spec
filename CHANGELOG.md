@@ -1,3 +1,8 @@
+# Unreleased
+* Added an experimental native `wgpu` backend for batched mel spectrograms on GPU-capable systems, including Apple Silicon via Metal
+* Added `Spectrogram::compute_all_cpu` and `Spectrogram::compute_mel_spectrogram_cpu` batch helpers for CPU/GPU comparisons
+* Added a Bluestein-based non-power-of-two GPU FFT path so Whisper's `fft_size = 400` works on the experimental `wgpu` backend
+
 # Version 0.3.4
 * Fixed kaldi fbank parity with kaldi_native_fbank:
   - Povey window (like Hamming but goes to zero at edges)
