@@ -9,11 +9,6 @@ A Rust implementation of mel spectrograms with support for:
 
 ## Examples
 
-The old Hush live demo is no longer hosted, but the source remains at
-[wavey-ai/hush](https://github.com/wavey-ai/hush). The browser graphics below
-show the original interactive view.
-
-![image](doc/browser.png)
 * [stream microphone or wav to mel wasm worker](examples/browser)
 * [stream from ffmpeg to whisper.cpp](examples/stream_whisper)
 * [convert audio to mel spectrograms and save to image](examples/mel_tga)
@@ -230,6 +225,14 @@ Fleeting word - VAD correctly detects:
 ![image](testdata/vad_on_27125.png)
 
 Full JFK transcript with VAD: [jfk_transcript_golden.txt](doc/jfk_transcript_golden.txt)
+
+### Hush Demo
+
+The old Hush live demo is no longer hosted, but the source remains at
+[wavey-ai/hush](https://github.com/wavey-ai/hush). The browser graphic below
+shows the original interactive view.
+
+![image](doc/browser.png)
 
 ## Performance
 
