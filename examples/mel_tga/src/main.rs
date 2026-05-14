@@ -1,6 +1,7 @@
 use mel_spec::prelude::*;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::path::Path;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -8,7 +9,7 @@ use structopt::StructOpt;
 struct Command {
     #[structopt(short, long, default_value = "80")]
     mels: usize,
-    #[structopt(short, long, default_value = "./")]
+    #[structopt(short, long, default_value = "./mel_out")]
     out_dir: String,
 }
 
@@ -23,6 +24,7 @@ fn bytes_to_f32_samples(bytes: &[u8]) -> Vec<f32> {
 fn main() {
     let args = Command::from_args();
     let out_dir = args.out_dir;
+    std::fs::create_dir_all(Path::new(&out_dir)).expect("failed to create output directory");
 
     let fft_size = 400;
     let hop_size = 160;

@@ -4,32 +4,37 @@ Real-time speech-to-text using mel spectrograms with Voice Activity Detection (V
 
 ## Building
 
+From the repository root:
+
 ```sh
-cargo build --release
+cargo build --release --manifest-path examples/stream_whisper/Cargo.toml
 ```
 
 ## Usage
 
 ### From audio file
 
+From the repository root:
+
 ```sh
-ffmpeg -i audio.mp3 -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/stream_whisper -m ~/ggml-base.en.bin
+cargo build --release --manifest-path examples/stream_whisper/Cargo.toml
+ffmpeg -i audio.mp3 -f f32le -ar 16000 -ac 1 pipe:1 | ./examples/stream_whisper/target/release/stream_whisper -m ~/ggml-base.en.bin
 ```
 
 ### From microphone (macOS)
 
 ```sh
-ffmpeg -f avfoundation -i ":1" -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/stream_whisper -m ~/ggml-base.en.bin
+ffmpeg -f avfoundation -i ":1" -f f32le -ar 16000 -ac 1 pipe:1 | ./examples/stream_whisper/target/release/stream_whisper -m ~/ggml-base.en.bin
 ```
 
 ### Options
 
 - `-m, --model-path <path>` - Path to Whisper GGML model
 - `-o, --out-path <path>` - Output directory for debug TGA files (default: `./mel_out`)
-- `--min-power <float>` - Minimum energy threshold for VAD (default: 1.0)
-- `--min-y <int>` - Minimum frequency bins for speech detection (default: 3)
+- `--min-power <float>` - Minimum energy threshold for VAD (default: `0.98`)
+- `--min-y <int>` - Minimum frequency bins for speech detection (default: `11`)
 - `--min-x <int>` - Minimum time frames for speech detection (default: 5)
-- `--min-mel <int>` - Minimum mel bin index (default: 0)
+- `--min-mel <int>` - Minimum mel bin index (default: `2`)
 - `--min-frames <int>` - Minimum frames before processing (default: 100)
 
 ## How It Works

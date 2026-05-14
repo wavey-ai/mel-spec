@@ -4,14 +4,19 @@ Transcribe audio that has been encoded as a mel spectrogram TGA image. No audio 
 
 ## Building
 
+From the repository root:
+
 ```sh
-cargo build --release
+cargo build --release --manifest-path examples/tga_whisper/Cargo.toml
 ```
 
 ## Usage
 
+From the repository root:
+
 ```sh
-./target/release/tga_whisper -m /path/to/ggml-base.en.bin -t spectrogram.tga
+cargo build --release --manifest-path examples/tga_whisper/Cargo.toml
+./examples/tga_whisper/target/release/tga_whisper -m /path/to/ggml-base.en.bin -t spectrogram.tga
 ```
 
 ### Options
@@ -24,13 +29,14 @@ cargo build --release
 First generate a TGA spectrogram using `mel_tga`:
 
 ```sh
-ffmpeg -i audio.wav -f f32le -ar 16000 -ac 1 pipe:1 | ../mel_tga/target/release/mel_tga
+cargo build --release --manifest-path examples/mel_tga/Cargo.toml
+ffmpeg -i audio.wav -f f32le -ar 16000 -ac 1 pipe:1 | ./examples/mel_tga/target/release/mel_tga
 ```
 
 Then transcribe it:
 
 ```sh
-./target/release/tga_whisper -m ~/ggml-base.en.bin -t ./mel_out/out_chunk0.tga
+./examples/tga_whisper/target/release/tga_whisper -m ~/ggml-base.en.bin -t ./mel_out/out_chunk0.tga
 ```
 
 Output:

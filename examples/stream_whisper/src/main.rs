@@ -1,6 +1,7 @@
 use mel_spec::prelude::*;
 use mel_spec::vad::{duration_ms_for_n_frames, format_milliseconds};
 use std::io::{self, Read};
+use std::path::Path;
 use structopt::StructOpt;
 use whisper_rs::*;
 
@@ -15,13 +16,13 @@ struct Command {
     model_path: String,
     #[structopt(short, long, default_value = "./mel_out")]
     out_path: String,
-    #[structopt(long, default_value = "1.0")]
+    #[structopt(long, default_value = "0.98")]
     min_power: f64,
-    #[structopt(long, default_value = "3")]
+    #[structopt(long, default_value = "11")]
     min_y: usize,
     #[structopt(long, default_value = "5")]
     min_x: usize,
-    #[structopt(long, default_value = "0")]
+    #[structopt(long, default_value = "2")]
     min_mel: usize,
     #[structopt(long, default_value = "100")]
     min_frames: usize,
@@ -39,6 +40,7 @@ fn main() {
     let args = Command::from_args();
     let model_path = args.model_path;
     let mel_path = args.out_path;
+    std::fs::create_dir_all(Path::new(&mel_path)).expect("failed to create output directory");
 
     let min_power = args.min_power;
     let min_y = args.min_y;

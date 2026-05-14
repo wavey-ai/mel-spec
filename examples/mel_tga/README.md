@@ -4,19 +4,22 @@ Converts audio to mel spectrograms and saves them as TGA image files. These spec
 
 ## Building
 
+From the repository root:
+
 ```sh
-cargo build --release
+cargo build --release --manifest-path examples/mel_tga/Cargo.toml
 ```
 
 ## Usage
 
-Pipe raw f32le audio (16kHz mono) via stdin:
+From the repository root, pipe raw f32le audio (16kHz mono) via stdin:
 
 ```sh
-ffmpeg -i input.wav -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/mel_tga
+cargo build --release --manifest-path examples/mel_tga/Cargo.toml
+ffmpeg -i input.wav -f f32le -ar 16000 -ac 1 pipe:1 | ./examples/mel_tga/target/release/mel_tga
 ```
 
-Or from an MP3:
+From this example directory, the same binary is:
 
 ```sh
 ffmpeg -i audio.mp3 -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/mel_tga
@@ -24,7 +27,8 @@ ffmpeg -i audio.mp3 -f f32le -ar 16000 -ac 1 pipe:1 | ./target/release/mel_tga
 
 ### Options
 
-- `-o, --out-path <path>` - Output directory (default: `./mel_out`)
+- `-m, --mels <n>` - Number of mel bins (default: `80`)
+- `-o, --out-dir <path>` - Output directory (default: `./mel_out`)
 
 ### Output
 
