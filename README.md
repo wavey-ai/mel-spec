@@ -134,14 +134,9 @@ selection; learned VADs such as Silero or TEN-VAD remain better when the primary
 requirement is strict speech/non-speech endpointing.
 
 ```rust
-use mel_spec::vad::{VoiceActivityDetector, DetectionSettings};
+use mel_spec::vad::{DetectionSettings, VoiceActivityDetector};
 
-let settings = DetectionSettings {
-    min_energy: 1.0,
-    min_y: 3,
-    min_x: 5,
-    min_mel: 0,
-};
+let settings = DetectionSettings::default();
 let mut vad = VoiceActivityDetector::new(&settings);
 ```
 
@@ -171,36 +166,31 @@ cd examples/vad_ten_eval
 cargo run --release
 ```
 
-The best macro-F1 `mel-spec` run from the current sweep:
+The evaluator defaults to the recommended `mel-spec` VAD preset for ASR
+chunking:
 
 ```bash
-cargo run --release -- \
-  --n-mels 80 \
-  --min-energy 1.0 \
-  --min-y 8 \
-  --min-x 5 \
-  --min-speech-ms 200 \
-  --merge-gap-ms 150
+cargo run --release
 ```
 
 Measured locally on the checked-in TEN-VAD testset:
 
 | System | Setting | Macro precision | Macro recall | Macro F1 | Macro FPR | RTFx |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `mel-spec` | best macro-F1 sweep result | 0.8097 | 0.9681 | 0.8765 | 0.6680 | 875.0 |
-| `mel-spec` | lower-FPR candidate | 0.8665 | 0.8597 | 0.8442 | 0.4159 | 877.5 |
+| `mel-spec` | recommended preset | 0.8665 | 0.8597 | 0.8442 | 0.4159 | 870.2 |
+| `mel-spec` | high-recall sweep result | 0.8097 | 0.9681 | 0.8765 | 0.6680 | 875.0 |
 | Silero | tuned threshold `0.13` | 0.8897 | 0.9388 | 0.9088 | 0.3602 | 110.3 |
 | Silero | default threshold `0.50` | 0.9379 | 0.8630 | 0.8826 | 0.1778 | 110.6 |
 
 Practical read:
 
-- Best `mel-spec` is about 3.2 macro-F1 points behind tuned Silero: `0.8765`
-  vs `0.9088`.
-- It gets that score by accepting many more false positives: `0.6680` FPR vs
-  tuned Silero's `0.3602`.
-- The lower-FPR `mel-spec` setting cuts FPR to `0.4159`, but macro F1 drops to
-  `0.8442`.
-- `mel-spec` is roughly 7.9x faster than Silero in this local run: about `875x`
+- The recommended `mel-spec` preset is the better operational default across
+  all 30 TEN files: macro F1 `0.8442`, macro FPR `0.4159`, and about `870x`
+  realtime.
+- A high-recall sweep result reaches macro F1 `0.8765`, but does so by accepting
+  many more false positives: FPR `0.6680`.
+- Tuned Silero is still more accurate overall: macro F1 `0.9088`, FPR `0.3602`.
+- `mel-spec` is roughly 7.9x faster than Silero in this local run: about `870x`
   realtime vs about `110x`.
 - For ASR chunking, `mel-spec` is useful because it is extremely cheap and finds
   speech-like structure/cut boundaries. For production endpointing or strict

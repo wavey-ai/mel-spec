@@ -2,12 +2,23 @@ use image::{ImageBuffer, Rgb};
 use ndarray::{concatenate, Array2, Axis};
 use std::collections::HashSet;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct DetectionSettings {
     pub min_energy: f64,
     pub min_y: usize,
     pub min_x: usize,
     pub min_mel: usize,
+}
+
+impl Default for DetectionSettings {
+    fn default() -> Self {
+        Self {
+            min_energy: 1.0,
+            min_y: 10,
+            min_x: 5,
+            min_mel: 0,
+        }
+    }
 }
 
 /// The purpose of these settings is to detect the "edges" of features in the
@@ -23,8 +34,7 @@ pub struct DetectionSettings {
 ///
 /// `min_energy`: the relative power of the signal, set at around 1 to
 ///  discard noise.
-/// `min_y`: this refers to the number of frames the gradient
-///  interescts: i.e., its duration along the x-axis.
+/// `min_y`: this refers to the number of mel bins the gradient intersects.
 /// `min_x`: the number of distinct gradients that must
 ///  cross a column on the x-asis for it to be considered generally
 ///  intersected. The reasoning here is that speech will always occupy more
@@ -32,9 +42,6 @@ pub struct DetectionSettings {
 ///  or more intersections.
 ///  `min_mel`: bins below this wont be counted. Useful if the signal
 ///  is noisy in the very low (first couple of bins) frequencies.
-///  `min_frames`: the min frames to accumulate before looking for a
-///  boundary to split at. This should be at least 50-100. (100 frames is
-///  1 second using Whisper FFT settings).
 ///
 /// See `doc/jfk_vad_boundaries.png` for a visualisation.
 impl DetectionSettings {
@@ -61,7 +68,7 @@ impl DetectionSettings {
 
     /// The min number of gradients allowed to intersect an x-axis before it is
     /// discounted from being a speech boundary.
-    /// `10` is a good default.
+    /// `5` is the default.
     pub fn min_x(&self) -> usize {
         self.min_x
     }
@@ -601,6 +608,15 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
 mod tests {
     use super::*;
     use crate::quant::{load_tga_8bit, to_array2};
+
+    #[test]
+    fn test_detection_settings_default() {
+        let settings = DetectionSettings::default();
+        assert_eq!(settings.min_energy, 1.0);
+        assert_eq!(settings.min_y, 10);
+        assert_eq!(settings.min_x, 5);
+        assert_eq!(settings.min_mel, 0);
+    }
 
     #[test]
     fn test_speech_detection() {
