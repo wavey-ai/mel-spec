@@ -135,8 +135,17 @@ a GGML Whisper model to run inference.
 
 ## Hush Demo
 
-The old Hush live demo is no longer hosted, but the source remains at
-[wavey-ai/hush](https://github.com/wavey-ai/hush). The browser graphic below
-shows the original interactive view.
+The Hush live browser demo is active again at:
+
+```text
+https://wavey.ai/code/hush/
+```
+
+The source remains at [wavey-ai/hush](https://github.com/wavey-ai/hush). Treat
+the current browser VAD as rough and experimental: it is useful for inspecting
+live mel structure, Sobel edges, ridge tracks, and candidate speech regions, but
+it is not a reliable standalone replacement for a learned VAD. In practice it is
+probably most useful as a browser-side feature/debugging front end or cheap
+prefilter before a stronger VAD/ASR model.
 
 ![image](doc/browser.png)
