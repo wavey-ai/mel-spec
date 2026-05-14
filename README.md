@@ -9,7 +9,9 @@ A Rust implementation of mel spectrograms with support for:
 
 ## Examples
 
-See [wavey-ai/hush](https://github.com/wavey-ai/hush) for live demo
+The old Hush live demo is no longer hosted, but the source remains at
+[wavey-ai/hush](https://github.com/wavey-ai/hush). The browser graphics below
+show the original interactive view.
 
 ![image](doc/browser.png)
 * [stream microphone or wav to mel wasm worker](examples/browser)
@@ -129,6 +131,13 @@ _"the quest for peace."_
 
 Uses Sobel edge detection to find speech boundaries in mel spectrograms. This enables real-time processing by finding natural cut points between words/phrases.
 
+This is not a unique idea in the broader VAD literature: STFT/log-mel features,
+energy thresholds, spectral gradients, and handcrafted postprocessing are all
+established signal-processing techniques. What is unusual in modern ASR stacks
+is the positioning: `mel-spec` reuses ASR mel features, avoids a separate VAD
+model/runtime, and treats the result primarily as a speech-structure and
+cut-boundary signal rather than a full learned speech/non-speech classifier.
+
 ```rust
 use mel_spec::vad::{VoiceActivityDetector, DetectionSettings};
 
@@ -137,12 +146,76 @@ let settings = DetectionSettings {
     min_y: 3,
     min_x: 5,
     min_mel: 0,
-    min_frames: 100,
 };
-let vad = VoiceActivityDetector::new(settings);
+let mut vad = VoiceActivityDetector::new(&settings);
 ```
 
 Speech in mel spectrograms is characterized by clear gradients. The VAD finds vertical gaps suitable for cutting, and drops frames that look like gaps in speech (which cause Whisper hallucinations).
+
+The streaming VAD can also return STFT-derived timestamps when it is constructed
+with frame timing:
+
+```rust
+use mel_spec::vad::{VadFrameTiming, VoiceActivityDetector};
+
+let timing = VadFrameTiming::new(400, 160, 16_000.0);
+let mut vad = VoiceActivityDetector::new_with_timing(&settings, timing);
+
+if let Some(activity) = vad.add_activity(&mel_frame) {
+    if let Some(ts) = activity.timestamps {
+        println!("active={} center_ms={}", activity.active, ts.center_ms);
+    }
+}
+```
+
+For comparison against a manually annotated VAD set, this repository vendors
+the TEN-VAD testset under `testdata/ten-vad`. Run the release evaluator:
+
+```bash
+cd examples/vad_ten_eval
+cargo run --release
+```
+
+The best macro-F1 `mel-spec` run from the current sweep:
+
+```bash
+cargo run --release -- \
+  --n-mels 80 \
+  --min-energy 1.0 \
+  --min-y 8 \
+  --min-x 5 \
+  --min-speech-ms 200 \
+  --merge-gap-ms 150
+```
+
+Measured locally on the checked-in TEN-VAD testset:
+
+| System | Setting | Macro precision | Macro recall | Macro F1 | Macro FPR | RTFx |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `mel-spec` | best macro-F1 sweep result | 0.8097 | 0.9681 | 0.8765 | 0.6680 | 875.0 |
+| `mel-spec` | lower-FPR candidate | 0.8665 | 0.8597 | 0.8442 | 0.4159 | 877.5 |
+| Silero | tuned threshold `0.13` | 0.8897 | 0.9388 | 0.9088 | 0.3602 | 110.3 |
+| Silero | default threshold `0.50` | 0.9379 | 0.8630 | 0.8826 | 0.1778 | 110.6 |
+
+Practical read:
+
+- Best `mel-spec` is about 3.2 macro-F1 points behind tuned Silero: `0.8765`
+  vs `0.9088`.
+- It gets that score by accepting many more false positives: `0.6680` FPR vs
+  tuned Silero's `0.3602`.
+- The lower-FPR `mel-spec` setting cuts FPR to `0.4159`, but macro F1 drops to
+  `0.8442`.
+- `mel-spec` is roughly 7.9x faster than Silero in this local run: about `875x`
+  realtime vs about `110x`.
+- For ASR chunking, `mel-spec` is useful because it is extremely cheap and finds
+  speech-like structure/cut boundaries. For production endpointing or strict
+  silence rejection, Silero or TEN-VAD is still a better fit.
+
+TEN-VAD is the source of the labels; upstream reports a stronger
+precision/recall curve than Silero/WebRTC on this same testset.
+
+Detailed method, provenance, commands, speed notes, and per-file results are in
+[doc/vad/README.md](doc/vad/README.md).
 
 ![image](doc/jfk_vad_example.png)
 

@@ -9,6 +9,9 @@ pub use crate::quant::tga_8bit;
 pub use crate::rb::RingBuffer;
 pub use crate::stft::Spectrogram;
 pub use crate::vad::DetectionSettings;
+pub use crate::vad::VadFrameTiming;
+pub use crate::vad::VoiceActivity;
 pub use crate::vad::VoiceActivityDetector;
+pub use crate::vad::VoiceActivityTimestamps;
 #[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 pub use crate::wgpu::WgpuMelSpectrogram;

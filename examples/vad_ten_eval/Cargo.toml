@@ -1,0 +1,9 @@
+[package]
+name = "vad_ten_eval"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hound = "3.5"
+mel_spec = { path = "../.." }
+ndarray = "0.16"

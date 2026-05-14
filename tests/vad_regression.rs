@@ -1,5 +1,8 @@
 use mel_spec::quant::{load_tga_8bit, to_array2};
-use mel_spec::vad::{vad_boundaries, DetectionSettings, VoiceActivityDetector};
+use mel_spec::vad::{
+    vad_boundaries, DetectionSettings, VadFrameTiming, VoiceActivityDetector,
+    VoiceActivityTimestamps,
+};
 use ndarray::{concatenate, s, Array, Array2, Axis};
 use std::collections::HashSet;
 
@@ -190,7 +193,11 @@ fn vad_boundaries_matches_legacy_on_reference_fixtures() {
         let legacy = legacy_vad_boundaries(&[frames], &settings);
 
         assert_eq!(current.intersected(), legacy.intersected(), "{path}");
-        assert_eq!(current.non_intersected(), legacy.non_intersected(), "{path}");
+        assert_eq!(
+            current.non_intersected(),
+            legacy.non_intersected(),
+            "{path}"
+        );
         assert_eq!(current.gradient_positions(), HashSet::new(), "{path}");
     }
 }
@@ -215,8 +222,45 @@ fn streaming_vad_matches_legacy_on_quantized_fixture() {
     let mut current = VoiceActivityDetector::new(&settings);
     let mut legacy = LegacyVoiceActivityDetector::new(&settings);
 
-    let current_outputs: Vec<Option<bool>> = chunks.iter().map(|chunk| current.add(chunk)).collect();
+    let current_outputs: Vec<Option<bool>> =
+        chunks.iter().map(|chunk| current.add(chunk)).collect();
     let legacy_outputs: Vec<Option<bool>> = chunks.iter().map(|chunk| legacy.add(chunk)).collect();
 
     assert_eq!(current_outputs, legacy_outputs);
+}
+
+#[test]
+fn streaming_vad_can_return_stft_timestamps() {
+    let n_mels = 80;
+    let settings = DetectionSettings {
+        min_energy: 1.0,
+        min_y: 3,
+        min_x: 3,
+        min_mel: 0,
+    };
+
+    let dequantized_mel = load_tga_8bit("./testdata/quantized_mel_golden.tga").unwrap();
+    let frames = to_array2(&dequantized_mel, n_mels);
+    let chunks: Vec<Array2<f64>> = frames
+        .axis_chunks_iter(Axis(1), 1)
+        .map(|chunk| chunk.to_owned())
+        .collect();
+
+    let timing = VadFrameTiming::new(400, 160, 16_000.0);
+    let mut vad = VoiceActivityDetector::new_with_timing(&settings, timing);
+    let first_activity = chunks
+        .iter()
+        .filter_map(|chunk| vad.add_activity(chunk))
+        .next()
+        .unwrap();
+
+    assert_eq!(first_activity.frame_index, 2);
+    assert_eq!(
+        first_activity.timestamps,
+        Some(VoiceActivityTimestamps {
+            start_ms: 20,
+            center_ms: 33,
+            end_ms: 45,
+        })
+    );
 }

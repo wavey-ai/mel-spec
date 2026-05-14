@@ -76,6 +76,55 @@ impl DetectionSettings {
 pub struct VoiceActivityDetector {
     mel_buffer: Vec<Array2<f64>>,
     settings: DetectionSettings,
+    frame_index: usize,
+    timing: Option<VadFrameTiming>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct VadFrameTiming {
+    pub fft_size: usize,
+    pub hop_size: usize,
+    pub sampling_rate: f64,
+}
+
+impl VadFrameTiming {
+    pub fn new(fft_size: usize, hop_size: usize, sampling_rate: f64) -> Self {
+        Self {
+            fft_size,
+            hop_size,
+            sampling_rate,
+        }
+    }
+
+    pub fn timestamps_for_frame(&self, frame_index: usize) -> VoiceActivityTimestamps {
+        let start_sample = frame_index.saturating_mul(self.hop_size);
+        let center_sample = start_sample.saturating_add(self.fft_size / 2);
+        let end_sample = start_sample.saturating_add(self.fft_size);
+
+        VoiceActivityTimestamps {
+            start_ms: sample_to_ms(start_sample, self.sampling_rate),
+            center_ms: sample_to_ms(center_sample, self.sampling_rate),
+            end_ms: sample_to_ms(end_sample, self.sampling_rate),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct VoiceActivityTimestamps {
+    pub start_ms: usize,
+    pub center_ms: usize,
+    pub end_ms: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct VoiceActivity {
+    pub active: bool,
+    pub frame_index: usize,
+    pub leading_active_columns: usize,
+    pub active_columns: usize,
+    pub window_columns: usize,
+    pub confidence: f64,
+    pub timestamps: Option<VoiceActivityTimestamps>,
 }
 
 impl VoiceActivityDetector {
@@ -85,11 +134,28 @@ impl VoiceActivityDetector {
         Self {
             mel_buffer,
             settings: settings.to_owned(),
+            frame_index: 0,
+            timing: None,
         }
+    }
+
+    pub fn new_with_timing(settings: &DetectionSettings, timing: VadFrameTiming) -> Self {
+        let mut vad = Self::new(settings);
+        vad.timing = Some(timing);
+        vad
     }
 
     /// Add Mel spectrogram - should be a single frame.
     pub fn add(&mut self, frame: &Array2<f64>) -> Option<bool> {
+        self.add_activity(frame).map(|activity| activity.active)
+    }
+
+    /// Add a single Mel spectrogram frame and return the activity decision with
+    /// its STFT frame index and optional timestamps.
+    pub fn add_activity(&mut self, frame: &Array2<f64>) -> Option<VoiceActivity> {
+        let frame_index = self.frame_index;
+        self.frame_index = self.frame_index.wrapping_add(1);
+
         let min_x = self.settings.min_x;
         self.mel_buffer.push(frame.to_owned());
         let max_buffered_frames = min_x.max(128);
@@ -105,12 +171,47 @@ impl VoiceActivityDetector {
         let window = &self.mel_buffer[self.mel_buffer.len() - min_x..];
         let edge_info = vad_boundaries(&window, &self.settings);
         let intersected = &edge_info.intersected_columns;
-        if intersected.is_empty() {
-            Some(false)
+        let active_columns = intersected.len();
+        let window_columns = active_columns + edge_info.non_intersected_columns.len();
+        let leading_active_columns = leading_active_columns(intersected);
+        let active = if intersected.is_empty() {
+            false
         } else {
-            Some(intersected[0] == 0)
+            intersected[0] == 0
+        };
+
+        Some(VoiceActivity {
+            active,
+            frame_index,
+            leading_active_columns,
+            active_columns,
+            window_columns,
+            confidence: if window_columns == 0 {
+                0.0
+            } else {
+                active_columns as f64 / window_columns as f64
+            },
+            timestamps: self
+                .timing
+                .map(|timing| timing.timestamps_for_frame(frame_index)),
+        })
+    }
+}
+
+fn sample_to_ms(sample: usize, sampling_rate: f64) -> usize {
+    ((sample as f64 / sampling_rate) * 1000.0).round() as usize
+}
+
+fn leading_active_columns(intersected: &[usize]) -> usize {
+    let mut expected = 0;
+    for &column in intersected {
+        if column == expected {
+            expected += 1;
+        } else if column > expected {
+            break;
         }
     }
+    expected
 }
 
 pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
