@@ -141,11 +141,12 @@ The Hush live browser demo is active again at:
 https://wavey.ai/code/hush/
 ```
 
-The source remains at [wavey-ai/hush](https://github.com/wavey-ai/hush). Treat
-the current browser VAD as rough and experimental: it is useful for inspecting
-live mel structure, Sobel edges, ridge tracks, and candidate speech regions, but
-it is not a reliable standalone replacement for a learned VAD. In practice it is
-probably most useful as a browser-side feature/debugging front end or cheap
-prefilter before a stronger VAD/ASR model.
+The source remains at [wavey-ai/hush](https://github.com/wavey-ai/hush). With
+the current tuned settings it works well as a live browser VAD and spectrogram
+debugging view: it exposes mel structure, Sobel edges, ridge tracks, and
+candidate speech regions in real time. It should still be treated as
+experimental rather than a drop-in replacement for a learned VAD; one strong use
+case is as a browser-side feature/debugging front end or cheap prefilter before a
+stronger VAD/ASR model.
 
 ![image](doc/browser.png)
