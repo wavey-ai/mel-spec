@@ -426,16 +426,16 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
         fft_size: 400,
         hop_size: 160,
         n_mels: 80,
-        min_energy: 1.0,
-        min_y: 10,
+        min_energy: 0.98,
+        min_y: 11,
         min_x: 5,
-        min_mel: 0,
+        min_mel: 2,
         time_mode: TimeMode::Center,
         min_leading_active_columns: 1,
         min_active_columns: 1,
         min_confidence: 0.0,
-        min_speech_ms: 100,
-        merge_gap_ms: 100,
+        min_speech_ms: 150,
+        merge_gap_ms: 150,
         print_segments: false,
         max_files: None,
     };
@@ -498,16 +498,16 @@ fn print_help() {
            --fft-size N         STFT size, default 400\n\
            --hop-size N         STFT hop size, default 160\n\
            --n-mels N           Mel bins for VAD, default 80\n\
-           --min-energy F       mel-spec VAD min_energy, default 1.0\n\
-           --min-y N            mel-spec VAD min_y, default 10\n\
+           --min-energy F       mel-spec VAD min_energy, default 0.98\n\
+           --min-y N            mel-spec VAD min_y, default 11\n\
            --min-x N            mel-spec VAD min_x, default 5\n\
-           --min-mel N          mel-spec VAD min_mel, default 0\n\
+           --min-mel N          mel-spec VAD min_mel, default 2\n\
            --time-mode MODE     start, center, or end, default center\n\
            --min-leading-active-columns N  Require N contiguous active columns from the boundary\n\
            --min-active-columns N  Require at least N active columns in the VAD window\n\
            --min-confidence F   Require active/window column ratio >= F\n\
-           --min-speech-ms N    Drop predicted speech segments shorter than N ms, default 100\n\
-           --merge-gap-ms N     Merge predicted speech segments separated by <= N ms, default 100\n\
+           --min-speech-ms N    Drop predicted speech segments shorter than N ms, default 150\n\
+           --merge-gap-ms N     Merge predicted speech segments separated by <= N ms, default 150\n\
            --max-files N        Evaluate only the first N wavs\n\
            --print-segments     Print predicted speech timestamp segments"
     );

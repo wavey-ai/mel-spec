@@ -166,35 +166,30 @@ cd examples/vad_ten_eval
 cargo run --release
 ```
 
-The evaluator defaults to the recommended `mel-spec` VAD preset for ASR
-chunking:
-
-```bash
-cargo run --release
-```
+The evaluator defaults to the balanced `mel-spec` VAD preset.
 
 Measured locally on the checked-in TEN-VAD testset:
 
 | System | Setting | Macro precision | Macro recall | Macro F1 | Macro FPR | RTFx |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `mel-spec` | recommended preset | 0.8665 | 0.8597 | 0.8442 | 0.4159 | 870.2 |
-| `mel-spec` | high-recall sweep result | 0.8097 | 0.9681 | 0.8765 | 0.6680 | 875.0 |
+| `mel-spec` | balanced default | 0.8751 | 0.8785 | 0.8566 | 0.3946 | 819.6 |
+| `mel-spec` | high-F1 sweep result | 0.8165 | 0.9635 | 0.8769 | 0.6459 | 828.9 |
 | Silero | tuned threshold `0.13` | 0.8897 | 0.9388 | 0.9088 | 0.3602 | 110.3 |
 | Silero | default threshold `0.50` | 0.9379 | 0.8630 | 0.8826 | 0.1778 | 110.6 |
 
 Practical read:
 
-- The recommended `mel-spec` preset is the better operational default across
-  all 30 TEN files: macro F1 `0.8442`, macro FPR `0.4159`, and about `870x`
-  realtime.
-- A high-recall sweep result reaches macro F1 `0.8765`, but does so by accepting
-  many more false positives: FPR `0.6680`.
+- The balanced `mel-spec` default improves the previous lower-FPR preset on
+  both macro F1 and false positives: macro F1 `0.8566`, macro FPR `0.3946`,
+  and about `820x` realtime.
+- A high-F1 sweep result reaches macro F1 `0.8769`, but does so by accepting
+  many more false positives: FPR `0.6459`.
 - Tuned Silero is still more accurate overall: macro F1 `0.9088`, FPR `0.3602`.
-- `mel-spec` is roughly 7.9x faster than Silero in this local run: about `870x`
+- `mel-spec` is roughly 7.4x faster than Silero in this local run: about `820x`
   realtime vs about `110x`.
-- For ASR chunking, `mel-spec` is useful because it is extremely cheap and finds
-  speech-like structure/cut boundaries. For production endpointing or strict
-  silence rejection, Silero or TEN-VAD is still a better fit.
+- `mel-spec` is useful because it is extremely cheap and reuses ASR mel/STFT
+  features. For production endpointing or strict silence rejection, Silero or
+  TEN-VAD is still a better fit.
 
 TEN-VAD is the source of the labels; upstream reports a stronger
 precision/recall curve than Silero/WebRTC on this same testset.

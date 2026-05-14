@@ -13,10 +13,10 @@ pub struct DetectionSettings {
 impl Default for DetectionSettings {
     fn default() -> Self {
         Self {
-            min_energy: 1.0,
-            min_y: 10,
+            min_energy: 0.98,
+            min_y: 11,
             min_x: 5,
-            min_mel: 0,
+            min_mel: 2,
         }
     }
 }
@@ -32,8 +32,8 @@ impl Default for DetectionSettings {
 /// there are no intersections above certain threshold - ie, short gaps in
 /// speech.
 ///
-/// `min_energy`: the relative power of the signal, set at around 1 to
-///  discard noise.
+/// `min_energy`: the relative power of the signal, set around `0.98` to
+///  discard noise while preserving speech edges.
 /// `min_y`: this refers to the number of mel bins the gradient intersects.
 /// `min_x`: the number of distinct gradients that must
 ///  cross a column on the x-asis for it to be considered generally
@@ -55,13 +55,13 @@ impl DetectionSettings {
     }
 
     /// Signals below this threshold will not be counted in edge detection.
-    /// `1.0` is a good default.
+    /// `0.98` is a good default.
     pub fn min_energy(&self) -> f64 {
         self.min_energy
     }
 
     /// The min length of a detectable gradient in x-asis frames.
-    /// `10` is a good default.
+    /// `11` is a good default.
     pub fn min_y(&self) -> usize {
         self.min_y
     }
@@ -74,7 +74,7 @@ impl DetectionSettings {
     }
 
     /// Ignore mel bands below this setting.
-    /// `0` is a good default.
+    /// `2` is a good default.
     pub fn min_mel(&self) -> usize {
         self.min_mel
     }
@@ -612,10 +612,10 @@ mod tests {
     #[test]
     fn test_detection_settings_default() {
         let settings = DetectionSettings::default();
-        assert_eq!(settings.min_energy, 1.0);
-        assert_eq!(settings.min_y, 10);
+        assert_eq!(settings.min_energy, 0.98);
+        assert_eq!(settings.min_y, 11);
         assert_eq!(settings.min_x, 5);
-        assert_eq!(settings.min_mel, 0);
+        assert_eq!(settings.min_mel, 2);
     }
 
     #[test]
