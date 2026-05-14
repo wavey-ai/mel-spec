@@ -23,16 +23,55 @@ pub struct SpeechToMel {
 impl SpeechToMel {
     #[wasm_bindgen]
     pub fn new(fft_size: usize, hop_size: usize, sampling_rate: f64, n_mels: usize) -> Self {
+        Self::new_with_settings(
+            fft_size,
+            hop_size,
+            sampling_rate,
+            n_mels,
+            DetectionSettings {
+                min_energy: 1.0,
+                min_y: 3,
+                min_x: 3,
+                min_mel: 0,
+            },
+        )
+    }
+
+    #[wasm_bindgen(js_name = newWithVadSettings)]
+    pub fn new_with_vad_settings(
+        fft_size: usize,
+        hop_size: usize,
+        sampling_rate: f64,
+        n_mels: usize,
+        min_energy: f64,
+        min_y: usize,
+        min_x: usize,
+        min_mel: usize,
+    ) -> Self {
+        Self::new_with_settings(
+            fft_size,
+            hop_size,
+            sampling_rate,
+            n_mels,
+            DetectionSettings {
+                min_energy,
+                min_y,
+                min_x,
+                min_mel,
+            },
+        )
+    }
+
+    fn new_with_settings(
+        fft_size: usize,
+        hop_size: usize,
+        sampling_rate: f64,
+        n_mels: usize,
+        settings: DetectionSettings,
+    ) -> Self {
         let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
         let filters2 = mel(sampling_rate, fft_size, n_mels / 4, None, None, false, true);
         let stft = Spectrogram::new(fft_size, hop_size);
-        let settings = DetectionSettings {
-            min_energy: 1.0,
-            min_y: 3,
-            min_x: 3,
-            min_mel: 0,
-        };
-
         let vad = VoiceActivityDetector::new(&settings);
         Self {
             accumulated_samples: Vec::new(),
