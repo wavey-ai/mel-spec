@@ -131,12 +131,12 @@ _"the quest for peace."_
 
 Uses Sobel edge detection to find speech boundaries in mel spectrograms. This enables real-time processing by finding natural cut points between words/phrases.
 
-This is not a unique idea in the broader VAD literature: STFT/log-mel features,
-energy thresholds, spectral gradients, and handcrafted postprocessing are all
-established signal-processing techniques. What is unusual in modern ASR stacks
-is the positioning: `mel-spec` reuses ASR mel features, avoids a separate VAD
-model/runtime, and treats the result primarily as a speech-structure and
-cut-boundary signal rather than a full learned speech/non-speech classifier.
+`mel-spec` includes a lightweight, model-free VAD for streaming ASR. Instead of
+loading a separate neural classifier, it reuses the STFT/log-mel features
+already produced for transcription and looks for speech-like spectral structure
+plus stable gaps. The result is best used for fast chunking and cut-point
+selection; learned VADs such as Silero or TEN-VAD remain better when the primary
+requirement is strict speech/non-speech endpointing.
 
 ```rust
 use mel_spec::vad::{VoiceActivityDetector, DetectionSettings};
