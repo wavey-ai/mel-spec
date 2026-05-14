@@ -82,6 +82,21 @@ Whisper examples without keeping the original audio around.
 ![image](doc/cutsec_46997.png)
 _"the quest for peace."_
 
+Mel spectrograms are also robust under heavy quantization. Whisper does not need
+high-precision PCM once the signal has been projected into mel space: 8-bit TGA
+images preserve the information the model sees, and even coarse rounding of mel
+values can retain useful transcription quality.
+
+```text
+Original: [0.158, 0.266, 0.076, 0.196, 0.167, ...]
+Rounded:  [0.2,   0.3,   0.1,   0.2,   0.2,   ...]
+```
+
+![original quantized mel spectrogram](doc/quantized_mel.png)
+![coarsely rounded quantized mel spectrogram](doc/quantized_mel_e1.png)
+_(top: original mel values, bottom: values rounded to 1.0e-1 before image
+quantization)_
+
 ## Performance
 
 Benchmarks on Apple M1 Pro, single-threaded release build:
