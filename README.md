@@ -18,6 +18,7 @@ reuses the same mel/STFT features.
 | Streaming STFT | Overlap-and-save STFT for live audio pipelines. |
 | Model-free VAD | Fast speech/non-speech decisions and timestamps from mel spectrogram structure. |
 | TGA mel images | Store and pass quantized mel spectrograms as simple 8-bit TGA files. |
+| Local Whisper WASM | Hush uses `mel-spec` mel tensors/TGA segments for fully local browser Whisper transcription. |
 | Native GPU backends | Experimental CUDA and `wgpu` paths for batched native mel generation. |
 | Browser worker demo | WASM worker and SharedArrayBuffer example for live browser audio. |
 
@@ -79,6 +80,13 @@ TGA spectrograms are useful when you want a simple interchange format for mel
 features. They can be inspected as images, spliced, stored, and passed to the
 Whisper examples without keeping the original audio around.
 
+This path is now live in Hush as local browser ASR. The browser uses
+`mel-spec`'s Whisper-compatible log-mel output, stores captured speech segments
+as compact 8-bit TGA images, decodes them back to an 80-mel `Float32Array`, and
+passes that tensor directly to a custom `whisper.cpp` WASM binding via
+`whisper_set_mel`. The active Hush deployment verifies that local WASM Whisper
+can transcribe from the mel tensor without posting microphone audio to a server.
+
 ![image](doc/cutsec_46997.png)
 _"the quest for peace."_
 
@@ -135,18 +143,18 @@ a GGML Whisper model to run inference.
 
 ## Hush Demo
 
-The Hush live browser demo is active again at:
+The Hush live browser demo is active at:
 
 ```text
-https://wavey.ai/code/hush/
+https://wavey.ai/code/hush/?v=20260515-35
 ```
 
 The source remains at [wavey-ai/hush](https://github.com/wavey-ai/hush). With
-the current tuned settings it works well as a live browser VAD and spectrogram
-debugging view: it exposes mel structure, Sobel edges, ridge tracks, and
-candidate speech regions in real time. It should still be treated as
-experimental rather than a drop-in replacement for a learned VAD; one strong use
-case is as a browser-side feature/debugging front end or cheap prefilter before a
-stronger VAD/ASR model.
+the current tuned settings it works as a live browser VAD, spectrogram debugging
+view, and local Whisper WASM transcription demo. It exposes mel structure, Sobel
+edges, ridge tracks, candidate speech regions, and the local transcript in real
+time. The VAD itself should still be treated as experimental rather than a
+drop-in replacement for a learned VAD; one strong use case is as a browser-side
+feature/debugging front end or cheap prefilter before a stronger VAD/ASR model.
 
 ![image](doc/browser.png)
