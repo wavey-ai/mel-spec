@@ -86,6 +86,8 @@ as compact 8-bit TGA images, decodes them back to an 80-mel `Float32Array`, and
 passes that tensor directly to a custom `whisper.cpp` WASM binding via
 `whisper_set_mel`. The active Hush deployment verifies that local WASM Whisper
 can transcribe from the mel tensor without posting microphone audio to a server.
+This uses the direct-mel endpoint/entry point we PR'd against `whisper.cpp`,
+not the stock browser example that feeds PCM audio into `whisper.wasm`.
 
 ![image](doc/cutsec_46997.png)
 _"the quest for peace."_
