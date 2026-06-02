@@ -3,22 +3,417 @@ use ort::value::Tensor;
 
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
 use num::Complex;
+use rustfft::{num_complex::Complex32, Fft, FftPlanner};
+use std::error::Error;
+use std::f32::consts::PI as PI_F32;
+use std::fmt;
+use std::sync::Arc;
 /// MelSpectrogram applies a pre-computed filterbank to an FFT result.
 /// Results are identical to whisper.cpp and whisper.py
 pub struct MelSpectrogram {
-    filters: Array2<f64>,
+    filters: SparseMelFilterbank,
+    mel_buf: Vec<f64>,
 }
 
 impl MelSpectrogram {
     pub fn new(fft_size: usize, sampling_rate: f64, n_mels: usize) -> Self {
         let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
-        Self { filters }
+        let filters = SparseMelFilterbank::from_dense(&filters);
+        let mel_buf = vec![0.0; filters.n_mels()];
+        Self { filters, mel_buf }
     }
 
     pub fn add(&mut self, fft: &Array1<Complex<f64>>) -> Array2<f64> {
-        let mel = log_mel_spectrogram(&fft, &self.filters);
-        let norm = norm_mel(&mel);
-        norm
+        self.filters.project_stft_log10(fft, &mut self.mel_buf);
+        let normalized = norm_mel_slice_f64(&self.mel_buf);
+        Array2::from_shape_vec((self.filters.n_mels(), 1), normalized)
+            .expect("mel output shape should match filterbank")
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SparseMelWeight {
+    pub bin: usize,
+    pub weight: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct SparseMelFilterbank {
+    rows: Vec<Vec<SparseMelWeight>>,
+    fft_bins: usize,
+    non_zero_weights: usize,
+}
+
+impl SparseMelFilterbank {
+    pub fn from_dense(filters: &Array2<f64>) -> Self {
+        let rows = filters
+            .rows()
+            .into_iter()
+            .map(|row| {
+                row.iter()
+                    .enumerate()
+                    .filter_map(|(bin, value)| {
+                        (*value != 0.0).then_some(SparseMelWeight {
+                            bin,
+                            weight: *value,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let non_zero_weights = rows.iter().map(Vec::len).sum();
+
+        Self {
+            rows,
+            fft_bins: filters.ncols(),
+            non_zero_weights,
+        }
+    }
+
+    pub fn from_mel(
+        sample_rate: f64,
+        n_fft: usize,
+        n_mels: usize,
+        f_min: Option<f64>,
+        f_max: Option<f64>,
+        htk: bool,
+        norm: bool,
+    ) -> Self {
+        let filters = mel(sample_rate, n_fft, n_mels, f_min, f_max, htk, norm);
+        Self::from_dense(&filters)
+    }
+
+    pub fn n_mels(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn fft_bins(&self) -> usize {
+        self.fft_bins
+    }
+
+    pub fn non_zero_weights(&self) -> usize {
+        self.non_zero_weights
+    }
+
+    pub fn dense_weights(&self) -> usize {
+        self.rows.len() * self.fft_bins
+    }
+
+    pub fn weights_for_mel(&self, mel_idx: usize) -> &[SparseMelWeight] {
+        &self.rows[mel_idx]
+    }
+
+    pub fn project_power_f64(&self, power: &[f64], output: &mut [f64]) {
+        assert_eq!(
+            power.len(),
+            self.fft_bins,
+            "power spectrum length must match filterbank bins"
+        );
+        assert_eq!(
+            output.len(),
+            self.rows.len(),
+            "output length must match mel count"
+        );
+
+        for (mel_idx, row) in self.rows.iter().enumerate() {
+            let mut energy = 0.0_f64;
+            for weight in row {
+                energy += weight.weight * power[weight.bin];
+            }
+            output[mel_idx] = energy;
+        }
+    }
+
+    pub fn project_power_f32(&self, power: &[f32], output: &mut [f32]) {
+        assert_eq!(
+            power.len(),
+            self.fft_bins,
+            "power spectrum length must match filterbank bins"
+        );
+        assert_eq!(
+            output.len(),
+            self.rows.len(),
+            "output length must match mel count"
+        );
+
+        for (mel_idx, row) in self.rows.iter().enumerate() {
+            let mut energy = 0.0_f32;
+            for weight in row {
+                energy += weight.weight as f32 * power[weight.bin];
+            }
+            output[mel_idx] = energy;
+        }
+    }
+
+    fn project_stft_log10(&self, stft: &Array1<Complex<f64>>, output: &mut [f64]) {
+        assert_eq!(
+            output.len(),
+            self.rows.len(),
+            "output length must match mel count"
+        );
+
+        let half = stft.len() / 2;
+        for (mel_idx, row) in self.rows.iter().enumerate() {
+            let mut energy = 0.0_f64;
+            for weight in row {
+                let power = if weight.bin < half {
+                    stft[weight.bin].norm_sqr()
+                } else {
+                    0.0
+                };
+                energy += weight.weight * power;
+            }
+            output[mel_idx] = energy.max(1e-10).log10();
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BatchLogMelConfig {
+    pub sample_rate: usize,
+    pub n_fft: usize,
+    pub win_length: usize,
+    pub hop_length: usize,
+    pub n_mels: usize,
+    pub f_min: f64,
+    pub f_max: Option<f64>,
+    pub htk: bool,
+    pub norm: bool,
+    pub preemphasis: f32,
+    pub center: bool,
+    pub log_zero_guard: f32,
+    pub pad_to: usize,
+    pub normalize_per_feature: bool,
+}
+
+impl Default for BatchLogMelConfig {
+    fn default() -> Self {
+        Self {
+            sample_rate: 16_000,
+            n_fft: 512,
+            win_length: 400,
+            hop_length: 160,
+            n_mels: 80,
+            f_min: 0.0,
+            f_max: None,
+            htk: false,
+            norm: true,
+            preemphasis: 0.0,
+            center: true,
+            log_zero_guard: f32::EPSILON,
+            pad_to: 0,
+            normalize_per_feature: false,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum BatchLogMelError {
+    InvalidConfig(&'static str),
+    Shape(ndarray::ShapeError),
+}
+
+impl fmt::Display for BatchLogMelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig(message) => write!(f, "invalid log-mel config: {message}"),
+            Self::Shape(error) => write!(f, "failed to shape log-mel features: {error}"),
+        }
+    }
+}
+
+impl Error for BatchLogMelError {}
+
+impl From<ndarray::ShapeError> for BatchLogMelError {
+    fn from(error: ndarray::ShapeError) -> Self {
+        Self::Shape(error)
+    }
+}
+
+pub struct BatchLogMelOutput {
+    pub data: Vec<f32>,
+    pub rows: usize,
+    pub cols: usize,
+}
+
+pub struct BatchLogMelSpectrogram {
+    config: BatchLogMelConfig,
+    filters: SparseMelFilterbank,
+    fft: Arc<dyn Fft<f32>>,
+    window: Vec<f32>,
+    fft_bins: usize,
+}
+
+impl BatchLogMelSpectrogram {
+    pub fn new(config: BatchLogMelConfig) -> Result<Self, BatchLogMelError> {
+        validate_batch_config(&config)?;
+
+        let mut planner = FftPlanner::<f32>::new();
+        let fft = planner.plan_fft_forward(config.n_fft);
+        let fft_bins = (config.n_fft / 2) + 1;
+        let f_max = config.f_max.unwrap_or(config.sample_rate as f64 / 2.0);
+        let filters = SparseMelFilterbank::from_mel(
+            config.sample_rate as f64,
+            config.n_fft,
+            config.n_mels,
+            Some(config.f_min),
+            Some(f_max),
+            config.htk,
+            config.norm,
+        );
+
+        if filters.fft_bins() != fft_bins || filters.n_mels() != config.n_mels {
+            return Err(BatchLogMelError::InvalidConfig(
+                "mel filterbank shape does not match FFT and mel settings",
+            ));
+        }
+
+        let window = centered_hann_window_f32(config.n_fft, config.win_length);
+
+        Ok(Self {
+            config,
+            filters,
+            fft,
+            window,
+            fft_bins,
+        })
+    }
+
+    pub fn config(&self) -> &BatchLogMelConfig {
+        &self.config
+    }
+
+    pub fn filters(&self) -> &SparseMelFilterbank {
+        &self.filters
+    }
+
+    pub fn scratch(&self) -> BatchLogMelScratch {
+        BatchLogMelScratch::new(
+            self.config.n_fft,
+            self.fft.get_inplace_scratch_len(),
+            self.fft_bins,
+            self.config.n_mels,
+        )
+    }
+
+    pub fn compute(&self, samples: &[f32]) -> Result<Array2<f32>, BatchLogMelError> {
+        let mut scratch = self.scratch();
+        self.compute_with_scratch(samples, &mut scratch)
+    }
+
+    pub fn compute_flat(&self, samples: &[f32]) -> Result<BatchLogMelOutput, BatchLogMelError> {
+        let mut scratch = self.scratch();
+        self.compute_flat_with_scratch(samples, &mut scratch)
+    }
+
+    pub fn compute_with_scratch(
+        &self,
+        samples: &[f32],
+        scratch: &mut BatchLogMelScratch,
+    ) -> Result<Array2<f32>, BatchLogMelError> {
+        let output = self.compute_flat_with_scratch(samples, scratch)?;
+        Ok(Array2::from_shape_vec(
+            (output.rows, output.cols),
+            output.data,
+        )?)
+    }
+
+    pub fn compute_flat_with_scratch(
+        &self,
+        samples: &[f32],
+        scratch: &mut BatchLogMelScratch,
+    ) -> Result<BatchLogMelOutput, BatchLogMelError> {
+        if samples.is_empty() {
+            return Ok(BatchLogMelOutput {
+                data: Vec::new(),
+                rows: self.config.n_mels,
+                cols: 0,
+            });
+        }
+
+        let valid_frames = self.num_frames(samples.len());
+        let padded_frames = pad_len(valid_frames, self.config.pad_to);
+        let mut features = vec![0.0_f32; self.config.n_mels * padded_frames];
+
+        scratch.waveform.clear();
+        scratch.waveform.extend_from_slice(samples);
+        apply_preemphasis(&mut scratch.waveform, self.config.preemphasis);
+
+        prepare_padded_waveform(
+            &scratch.waveform,
+            &mut scratch.padded,
+            self.config.n_fft,
+            self.config.center,
+        );
+
+        for frame_idx in 0..valid_frames {
+            let start = frame_idx * self.config.hop_length;
+            for i in 0..self.config.n_fft {
+                let sample = scratch.padded.get(start + i).copied().unwrap_or(0.0);
+                scratch.fft_input[i] = Complex32::new(sample * self.window[i], 0.0);
+            }
+
+            self.fft
+                .process_with_scratch(&mut scratch.fft_input, &mut scratch.fft_scratch);
+
+            for (bin_idx, value) in scratch.fft_input.iter().take(self.fft_bins).enumerate() {
+                scratch.power[bin_idx] = value.norm_sqr();
+            }
+
+            self.filters
+                .project_power_f32(&scratch.power, &mut scratch.mel_energy);
+            for mel_idx in 0..self.config.n_mels {
+                features[(mel_idx * padded_frames) + frame_idx] =
+                    (scratch.mel_energy[mel_idx] + self.config.log_zero_guard).ln();
+            }
+        }
+
+        if self.config.normalize_per_feature {
+            normalize_per_feature(
+                &mut features,
+                self.config.n_mels,
+                valid_frames,
+                padded_frames,
+            );
+        }
+
+        Ok(BatchLogMelOutput {
+            data: features,
+            rows: self.config.n_mels,
+            cols: padded_frames,
+        })
+    }
+
+    fn num_frames(&self, sample_len: usize) -> usize {
+        if self.config.center {
+            (sample_len / self.config.hop_length) + 1
+        } else if sample_len < self.config.n_fft {
+            0
+        } else {
+            ((sample_len - self.config.n_fft) / self.config.hop_length) + 1
+        }
+    }
+}
+
+pub struct BatchLogMelScratch {
+    waveform: Vec<f32>,
+    padded: Vec<f32>,
+    fft_input: Vec<Complex32>,
+    fft_scratch: Vec<Complex32>,
+    power: Vec<f32>,
+    mel_energy: Vec<f32>,
+}
+
+impl BatchLogMelScratch {
+    fn new(n_fft: usize, fft_scratch_len: usize, fft_bins: usize, n_mels: usize) -> Self {
+        Self {
+            waveform: Vec::new(),
+            padded: Vec::new(),
+            fft_input: vec![Complex32::new(0.0, 0.0); n_fft],
+            fft_scratch: vec![Complex32::new(0.0, 0.0); fft_scratch_len],
+            power: vec![0.0; fft_bins],
+            mel_energy: vec![0.0; n_mels],
+        }
     }
 }
 
@@ -40,23 +435,10 @@ pub fn mel_tensor(frames: &[f32], n_mels: usize) -> (Tensor<f32>, Tensor<i64>) {
 /// The normalised `Array2` output must be processed with [`interleave_frames`]
 /// before sending to whisper.cpp
 pub fn log_mel_spectrogram(stft: &Array1<Complex<f64>>, mel_filters: &Array2<f64>) -> Array2<f64> {
-    let mut magnitudes_padded = stft
-        .iter()
-        .map(|v| v.norm_sqr())
-        .take(stft.len() / 2)
-        .collect::<Vec<_>>();
-
-    magnitudes_padded.push(0.0);
-
-    let magnitudes_reshaped =
-        Array2::from_shape_vec((1, magnitudes_padded.len()), magnitudes_padded).unwrap();
-
-    let epsilon = 1e-10;
-    let mel_spec = mel_filters
-        .dot(&magnitudes_reshaped.t())
-        .mapv(|sum| (sum.max(epsilon)).log10());
-
-    mel_spec
+    let filters = SparseMelFilterbank::from_dense(mel_filters);
+    let mut out = vec![0.0; filters.n_mels()];
+    filters.project_stft_log10(stft, &mut out);
+    Array2::from_shape_vec((filters.n_mels(), 1), out).unwrap()
 }
 
 /// Normalisation based on max value in the sample window.
@@ -260,6 +642,119 @@ pub fn fft_frequencies(sr: f64, n_fft: usize) -> Array1<f64> {
     freqs
 }
 
+fn norm_mel_slice_f64(mel_spec: &[f64]) -> Vec<f64> {
+    let mmax = mel_spec
+        .iter()
+        .fold(f64::NEG_INFINITY, |acc, &x| acc.max(x))
+        - 8.0;
+    mel_spec
+        .iter()
+        .map(|&x| (x.max(mmax) + 4.0) / 4.0)
+        .collect()
+}
+
+fn validate_batch_config(config: &BatchLogMelConfig) -> Result<(), BatchLogMelError> {
+    if config.sample_rate == 0 {
+        return Err(BatchLogMelError::InvalidConfig("sample_rate must be > 0"));
+    }
+    if config.n_fft == 0 {
+        return Err(BatchLogMelError::InvalidConfig("n_fft must be > 0"));
+    }
+    if config.win_length == 0 {
+        return Err(BatchLogMelError::InvalidConfig("win_length must be > 0"));
+    }
+    if config.win_length > config.n_fft {
+        return Err(BatchLogMelError::InvalidConfig(
+            "win_length must be <= n_fft",
+        ));
+    }
+    if config.hop_length == 0 {
+        return Err(BatchLogMelError::InvalidConfig("hop_length must be > 0"));
+    }
+    if config.n_mels == 0 {
+        return Err(BatchLogMelError::InvalidConfig("n_mels must be > 0"));
+    }
+    if !config.log_zero_guard.is_finite() || config.log_zero_guard <= 0.0 {
+        return Err(BatchLogMelError::InvalidConfig(
+            "log_zero_guard must be finite and > 0",
+        ));
+    }
+    Ok(())
+}
+
+fn prepare_padded_waveform(waveform: &[f32], padded: &mut Vec<f32>, n_fft: usize, center: bool) {
+    padded.clear();
+    if center {
+        let pad = n_fft / 2;
+        padded.resize(waveform.len() + (pad * 2), 0.0);
+        padded[pad..pad + waveform.len()].copy_from_slice(waveform);
+    } else {
+        padded.extend_from_slice(waveform);
+    }
+}
+
+fn apply_preemphasis(waveform: &mut [f32], coeff: f32) {
+    if waveform.is_empty() || coeff == 0.0 {
+        return;
+    }
+    let mut prev = waveform[0];
+    for sample in waveform.iter_mut().skip(1) {
+        let current = *sample;
+        *sample = current - (coeff * prev);
+        prev = current;
+    }
+}
+
+fn centered_hann_window_f32(n_fft: usize, win_length: usize) -> Vec<f32> {
+    let mut window = vec![0.0_f32; n_fft];
+    if win_length <= 1 {
+        return window;
+    }
+    let offset = (n_fft - win_length) / 2;
+    for i in 0..win_length {
+        let phase = (2.0 * PI_F32 * i as f32) / (win_length as f32 - 1.0);
+        window[offset + i] = 0.5 - (0.5 * phase.cos());
+    }
+    window
+}
+
+fn normalize_per_feature(
+    features: &mut [f32],
+    n_mels: usize,
+    valid_frames: usize,
+    padded_frames: usize,
+) {
+    if valid_frames == 0 {
+        return;
+    }
+    for mel_idx in 0..n_mels {
+        let start = mel_idx * padded_frames;
+        let row = &mut features[start..start + padded_frames];
+        let valid = &row[..valid_frames];
+        let mean = valid.iter().sum::<f32>() / valid_frames as f32;
+        let denom = (valid_frames as f32 - 1.0).max(1.0);
+        let variance = valid
+            .iter()
+            .map(|value| {
+                let centered = *value - mean;
+                centered * centered
+            })
+            .sum::<f32>()
+            / denom;
+        let std = variance.sqrt() + 1e-5;
+        for value in row[..valid_frames].iter_mut() {
+            *value = (*value - mean) / std;
+        }
+    }
+}
+
+fn pad_len(len: usize, pad_to: usize) -> usize {
+    if pad_to == 0 {
+        return len;
+    }
+    len.div_ceil(pad_to) * pad_to
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +882,81 @@ mod tests {
         let mel_spec = stage.add(&fft_input);
         // Ensure that the output Mel spectrogram has the correct shape
         assert_eq!(mel_spec.shape(), &[n_mels, 1]);
+    }
+
+    #[test]
+    fn test_sparse_filterbank_matches_dense_projection() {
+        let dense = mel(16000.0, 512, 128, Some(0.0), Some(8000.0), false, true);
+        let sparse = SparseMelFilterbank::from_dense(&dense);
+        let power = (0..257)
+            .map(|idx| ((idx as f64 + 1.0) * 0.001).sin().abs())
+            .collect::<Vec<_>>();
+        let mut got = vec![0.0_f64; 128];
+        sparse.project_power_f64(&power, &mut got);
+
+        for mel_idx in 0..128 {
+            let mut want = 0.0_f64;
+            for bin_idx in 0..257 {
+                want += dense[(mel_idx, bin_idx)] * power[bin_idx];
+            }
+            assert!(
+                (got[mel_idx] - want).abs() <= 1e-12,
+                "mel {mel_idx}: got {}, want {}",
+                got[mel_idx],
+                want
+            );
+        }
+
+        assert!(sparse.non_zero_weights() < sparse.dense_weights() / 10);
+    }
+
+    #[test]
+    fn test_sparse_mel_spectrogram_matches_dense_api() {
+        let fft_size = 512;
+        let sampling_rate = 16000.0;
+        let n_mels = 80;
+        let fft_input = Array1::from(
+            (0..fft_size)
+                .map(|idx| {
+                    let real = (idx as f64 * 0.01).sin();
+                    let imag = (idx as f64 * 0.013).cos();
+                    Complex::new(real, imag)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
+        let want = norm_mel(&log_mel_spectrogram(&fft_input, &filters));
+        let mut sparse = MelSpectrogram::new(fft_size, sampling_rate, n_mels);
+        let got = sparse.add(&fft_input);
+
+        assert_eq!(got.shape(), want.shape());
+        for row in 0..n_mels {
+            assert!(
+                (got[(row, 0)] - want[(row, 0)]).abs() <= 1e-12,
+                "row {row}: got {}, want {}",
+                got[(row, 0)],
+                want[(row, 0)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_batch_log_mel_config_produces_feature_major_shape() {
+        let config = BatchLogMelConfig {
+            n_mels: 128,
+            preemphasis: 0.97,
+            log_zero_guard: 2.0_f32.powi(-24),
+            normalize_per_feature: true,
+            ..BatchLogMelConfig::default()
+        };
+        let frontend = BatchLogMelSpectrogram::new(config).unwrap();
+        let mut scratch = frontend.scratch();
+        let samples = vec![0.0_f32; 16000];
+
+        let features = frontend
+            .compute_with_scratch(&samples, &mut scratch)
+            .unwrap();
+
+        assert_eq!(features.shape(), &[128, 101]);
     }
 }

@@ -4,6 +4,11 @@
 
 Fast Rust mel spectrogram and VAD primitives for ASR systems.
 
+**Release note:** `0.4.0` moves CPU mel and Kaldi fbank computation onto sparse
+filterbank projection derived from the same dense reference matrices. On the
+Parakeet/NeMo JFK benchmark, the pure Rust frontend is now close to C/libtorch
+CPU trace performance while preserving fixture parity.
+
 `mel-spec` is built around the parts of speech pipelines that need to be cheap,
 predictable, and easy to embed: STFT, Whisper-compatible log-mel features,
 Kaldi-style filterbanks, TGA spectrogram interchange, and a lightweight VAD that
@@ -116,6 +121,47 @@ Benchmarks on Apple M1 Pro, single-threaded release build:
 | 10s | 997 | 21ms | 476x realtime |
 | 60s | 5997 | 124ms | 484x realtime |
 | 300s | 29997 | 622ms | 482x realtime |
+
+`mel()` and the Kaldi filterbank builder still produce dense filterbank
+matrices for reference, fixture comparison, and interchange with other
+toolchains. Runtime mel/fbank computation derives sparse projection tables from
+those dense matrices, so the executed math is checked against the same reference
+weights instead of maintaining a separate filterbank definition.
+
+### Parakeet/NeMo Frontend Check
+
+`asr-api` also uses `mel-spec` filterbanks in its Parakeet/TDT frontend. We
+benchmarked that Rust frontend against a CPU TorchScript trace of the original
+NeMo Parakeet featurizer (`featurizer_cpu.pt`) on the JFK sample
+(`11s`, mono 16 kHz) on the same M1 Mac.
+
+The benchmark is useful for two reasons:
+
+- It catches frontend contract drift: the first run found a one-frame mismatch
+  (`128x1100` vs `128x1101`) caused by dropping NeMo's final centered/padded
+  frame.
+- After matching the frame count, the Rust features are numerically very close
+  to the traced NeMo frontend.
+
+| Featurizer | Shape | Mean | p50 | p95 | RTFx |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Rust Parakeet frontend using `mel-spec` | `128x1101` | `2.341ms` | `2.334ms` | `2.406ms` | `4699.62` |
+| TorchScript CPU trace | `128x1101` | `2.244ms` | `2.206ms` | `2.813ms` | `4902.22` |
+
+Feature comparison across the full tensor:
+
+| Metric | Value |
+| --- | ---: |
+| MAE | `0.001183` |
+| RMSE | `0.023699` |
+| Max absolute error | `3.965733` |
+| Correlation | `0.999719` |
+
+The Rust Parakeet path uses `BatchLogMelSpectrogram` from the existing `mel`
+module. It keeps FFT scratch buffers alive between calls and applies the mel
+filterbank sparsely. This brings the pure Rust frontend close to the traced CPU
+frontend while avoiding the libtorch/PyTorch runtime dependency. The comparison
+harness lives in `asr-torch` as `parakeet_featurizer_bench`.
 
 The CPU path is the default and is already fast enough for many streaming and
 batch workloads. Experimental native GPU backends are available behind feature

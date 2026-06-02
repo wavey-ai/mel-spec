@@ -18,6 +18,8 @@ use rustfft::{Fft, FftPlanner};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
+use crate::mel::SparseMelFilterbank;
+
 /// Configuration for Kaldi-compatible filterbank extraction.
 #[derive(Clone, Debug)]
 pub struct FbankConfig {
@@ -83,6 +85,7 @@ impl FbankConfig {
 pub struct Fbank {
     config: FbankConfig,
     mel_filters: Array2<f64>,
+    sparse_mel_filters: SparseMelFilterbank,
     fft: Arc<dyn Fft<f64>>,
     window: Vec<f64>,
 }
@@ -114,6 +117,7 @@ impl Fbank {
             config.low_freq,
             high_freq,
         );
+        let sparse_mel_filters = SparseMelFilterbank::from_dense(&mel_filters);
 
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(fft_size);
@@ -121,6 +125,7 @@ impl Fbank {
         Self {
             config,
             mel_filters,
+            sparse_mel_filters,
             fft,
             window,
         }
@@ -147,8 +152,10 @@ impl Fbank {
         let mut features = Array2::zeros((num_frames, self.config.num_mel_bins));
 
         let mut complex_buf = vec![Complex::new(0.0, 0.0); fft_size];
-        let mut scratch_buf = vec![Complex::new(0.0, 0.0); fft_size];
+        let mut scratch_buf = vec![Complex::new(0.0, 0.0); self.fft.get_inplace_scratch_len()];
         let mut frame_buf = vec![0.0f64; frame_len];
+        let mut power_spectrum = vec![0.0f64; fft_size / 2 + 1];
+        let mut mel_energies = vec![0.0f64; self.config.num_mel_bins];
 
         for frame_idx in 0..num_frames {
             let start = frame_idx * frame_shift;
@@ -187,7 +194,6 @@ impl Fbank {
                 .process_with_scratch(&mut complex_buf, &mut scratch_buf);
 
             // Power spectrum (only positive frequencies)
-            let mut power_spectrum = vec![0.0f64; fft_size / 2 + 1];
             for (i, c) in complex_buf.iter().take(fft_size / 2 + 1).enumerate() {
                 power_spectrum[i] = if self.config.use_power {
                     c.norm_sqr()
@@ -196,13 +202,9 @@ impl Fbank {
                 };
             }
 
-            // Apply mel filterbank
-            for (mel_idx, filter_row) in self.mel_filters.rows().into_iter().enumerate() {
-                let mut mel_energy: f64 = 0.0;
-                for (freq_idx, &filter_val) in filter_row.iter().enumerate() {
-                    mel_energy += filter_val * power_spectrum[freq_idx];
-                }
-
+            self.sparse_mel_filters
+                .project_power_f64(&power_spectrum, &mut mel_energies);
+            for (mel_idx, mel_energy) in mel_energies.iter_mut().enumerate() {
                 // Apply energy floor and log
                 // Kaldi uses FLT_EPSILON (f32::EPSILON ≈ 1.19e-7) as minimum to avoid log(0)
                 let floor = if self.config.energy_floor > 0.0 {
@@ -210,12 +212,12 @@ impl Fbank {
                 } else {
                     f32::EPSILON as f64 // ~1.19e-7, matches kaldi FLT_EPSILON
                 };
-                mel_energy = mel_energy.max(floor);
+                *mel_energy = (*mel_energy).max(floor);
                 if self.config.use_log_fbank {
-                    mel_energy = mel_energy.ln();
+                    *mel_energy = mel_energy.ln();
                 }
 
-                features[[frame_idx, mel_idx]] = mel_energy as f32;
+                features[[frame_idx, mel_idx]] = *mel_energy as f32;
             }
         }
 
@@ -236,6 +238,11 @@ impl Fbank {
     /// Get the configuration.
     pub fn config(&self) -> &FbankConfig {
         &self.config
+    }
+
+    /// Dense Kaldi-style filterbank weights used as the reference projection.
+    pub fn dense_filterbank(&self) -> &Array2<f64> {
+        &self.mel_filters
     }
 }
 
@@ -392,6 +399,41 @@ mod tests {
         // num_frames = 1 + (16000 - 400) / 160 = 98
         assert_eq!(features.shape()[1], 80); // num_mel_bins
         assert!(features.shape()[0] > 90 && features.shape()[0] < 100);
+    }
+
+    #[test]
+    fn test_sparse_projection_matches_dense_filterbank() {
+        let config = FbankConfig::default();
+        let fbank = Fbank::new(config);
+        let power_spectrum = (0..fbank.mel_filters.ncols())
+            .map(|idx| ((idx as f64 + 1.0) * 0.013).sin().abs())
+            .collect::<Vec<_>>();
+        let mut sparse = vec![0.0; fbank.config.num_mel_bins];
+
+        fbank
+            .sparse_mel_filters
+            .project_power_f64(&power_spectrum, &mut sparse);
+
+        for mel_idx in 0..fbank.config.num_mel_bins {
+            let dense = fbank
+                .mel_filters
+                .row(mel_idx)
+                .iter()
+                .zip(power_spectrum.iter())
+                .map(|(filter, power)| filter * power)
+                .sum::<f64>();
+            assert!(
+                (sparse[mel_idx] - dense).abs() <= 1e-12,
+                "mel {mel_idx}: sparse {}, dense {}",
+                sparse[mel_idx],
+                dense
+            );
+        }
+
+        assert!(
+            fbank.sparse_mel_filters.non_zero_weights()
+                < fbank.sparse_mel_filters.dense_weights() / 10
+        );
     }
 
     #[test]

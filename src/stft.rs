@@ -123,15 +123,15 @@ impl Spectrogram {
         n_mels: usize,
         sampling_rate: f64,
     ) -> Vec<Vec<f32>> {
-        let filters = crate::mel::mel(sampling_rate, fft_size, n_mels, None, None, false, true);
         let frames = Self::compute_all_cpu(samples, fft_size, hop_size);
+        let mut mel_stage = crate::mel::MelSpectrogram::new(fft_size, sampling_rate, n_mels);
         let mut out = Vec::with_capacity(frames.len());
 
         for frame in frames {
             let frame = Array1::from_vec(frame);
-            let mel = crate::mel::log_mel_spectrogram(&frame, &filters);
+            let mel = mel_stage.add(&frame);
             let row: Vec<f32> = mel.iter().map(|v| *v as f32).collect();
-            out.push(crate::mel::norm_mel_vec(&row));
+            out.push(row);
         }
 
         out
