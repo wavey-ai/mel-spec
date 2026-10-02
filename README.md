@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wavey-ai/mel-spec/actions/workflows/ci.yml/badge.svg)](https://github.com/wavey-ai/mel-spec/actions/workflows/ci.yml)
 
-Fast Rust mel spectrogram and VAD primitives for ASR systems.
+Rust mel spectrogram, filterbank, and VAD components for ASR systems.
 
 **Release note:** `0.5.0` makes CPU feature extraction faster. The CPU paths
 use a real-input FFT, and the batch paths project eight frames at a time.
@@ -16,28 +16,20 @@ Results match `0.4.1` within FFT rounding. Details are in
 | Kaldi fbank | 1.5x |
 | VAD | 3.7x |
 
-`mel-spec` contains low-cost, predictable components for speech pipelines. The
-components are:
-
-- STFT
-- Whisper-compatible log-mel features
-- Kaldi-style filterbanks
-- TGA spectrogram interchange
-- a lightweight VAD that reuses the same mel and STFT features.
-
 ## Main Features
 
-| Feature | What it is for |
-| --- | --- |
-| Whisper-compatible mel | Log-mel spectrograms aligned with whisper.cpp, PyTorch, and librosa. |
-| Kaldi-compatible fbank | 80-bin Kaldi-style filterbank features for speaker and audio models. |
-| Streaming STFT | Overlap-and-save STFT for live audio pipelines. |
-| Interleaved PCM | Downmix stereo or multichannel PCM during batch feature extraction. |
-| Model-free VAD | Fast speech/non-speech decisions and timestamps from mel spectrogram structure. |
-| TGA mel images | Store and pass quantized mel spectrograms as simple 8-bit TGA files. |
-| Local Whisper WASM | Hush uses `mel-spec` mel tensors/TGA segments for fully local browser Whisper transcription. |
-| Native GPU backends | Experimental CUDA and `wgpu` paths for batched native mel generation. |
-| Browser worker demo | WASM worker and SharedArrayBuffer example for live browser audio. |
+| Feature | API | Use |
+| --- | --- | --- |
+| Batch log-mel frontend | `BatchLogMelSpectrogram` | Whole-utterance log-mel features with centered framing, pre-emphasis, padding, and per-feature normalization. The Parakeet/NeMo frontend in `asr-api` uses it. |
+| Whisper-compatible mel | `Spectrogram`, `MelSpectrogram` | Streaming and batch log-mel spectrograms that match whisper.cpp, PyTorch, and librosa. |
+| Kaldi-compatible fbank | `Fbank` | Kaldi-style filterbank features with the Povey window, the Kaldi mel scale, and CMN. |
+| Mel filterbanks | `mel`, `SparseMelFilterbank` | Slaney or HTK filterbank matrices, and the sparse form that the CPU paths execute. |
+| Streaming input | `RingBuffer` | Bounded sample buffer that gives one mel frame for each hop. The `rtrb` feature uses an `rtrb` ring buffer. |
+| Interleaved PCM | `compute_interleaved`, `downmix_interleaved` | Downmix of stereo or multichannel PCM before batch feature extraction. |
+| Model-free VAD | `VoiceActivityDetector`, `vad_boundaries` | Speech decisions and timestamps from the edge structure of mel frames. |
+| TGA mel images | `tga_8bit`, `save_tga_8bit`, `load_tga_8bit` | Quantized 8-bit mel spectrograms in TGA files. |
+| WASM worker | `SpeechToMel` (`wasm` feature) | Mel frames, quantization, and VAD in a browser worker. Hush uses it for local Whisper transcription. |
+| GPU backends | `WgpuMelSpectrogram`, `CudaMelSpectrogram` | Experimental batched mel generation with `wgpu` (Metal, Vulkan, DX12) or `cuda` (NVIDIA). |
 
 ## Quick Start
 
@@ -54,6 +46,20 @@ let mel_frames = Spectrogram::compute_mel_spectrogram_cpu(
 );
 
 println!("frames={}", mel_frames.len());
+```
+
+For whole utterances, `BatchLogMelSpectrogram` gives feature-major output. Keep
+the scratch buffers to reuse them across calls:
+
+```rust
+use mel_spec::prelude::*;
+
+let frontend = BatchLogMelSpectrogram::new(BatchLogMelConfig::default()).unwrap();
+let mut scratch = frontend.scratch();
+let samples = vec![0.0_f32; 16_000];
+let features = frontend.compute_with_scratch(&samples, &mut scratch).unwrap();
+
+assert_eq!(features.shape(), &[80, 101]);
 ```
 
 Use `BatchLogMelSpectrogram::compute_interleaved` for interleaved audio. The
@@ -129,38 +135,38 @@ quantization)_
 
 ## Performance
 
-Benchmarks on Apple M1 Pro, single-threaded release build:
+`mel-spec` 0.5.0 on the 11-second JFK sample, one Apple M1 core, release build:
 
-| Audio Length | Frames | Time | Throughput |
-| --- | ---: | ---: | ---: |
-| 10s | 997 | 21ms | 476x realtime |
-| 60s | 5997 | 124ms | 484x realtime |
-| 300s | 29997 | 622ms | 482x realtime |
+| Path | Time | Realtime factor |
+| --- | ---: | ---: |
+| `BatchLogMelSpectrogram`, Parakeet configuration | 1.13 ms | 9,700x |
+| `BatchLogMelSpectrogram`, default configuration | 0.95 ms | 11,600x |
+| `Spectrogram::compute_mel_spectrogram_cpu` (Whisper) | 1.97 ms | 5,600x |
+| `Spectrogram::add` and `MelSpectrogram::add` (Whisper, streaming) | 2.53 ms | 4,300x |
+| `RingBuffer` | 2.34 ms | 4,700x |
+| `Fbank::compute` | 2.13 ms | 5,200x |
+| `VoiceActivityDetector::add_activity` | 0.23 ms | 47,000x |
 
-`mel()` and the Kaldi filterbank builder still produce dense filterbank
-matrices for reference, fixture comparison, and interchange with other
-toolchains. Runtime mel/fbank computation derives sparse projection tables from
-these dense matrices. Thus, tests compare the executed math with the same
-reference weights. A separate filterbank definition is not necessary.
+The Parakeet configuration has 128 mels, pre-emphasis 0.97, and per-feature
+normalization. The time increases linearly with the audio length: 66 seconds of
+audio take 6.8 ms in the Parakeet configuration.
 
-### Parakeet/NeMo Frontend Check
+`mel()` and the Kaldi filterbank builder produce dense filterbank matrices for
+reference, fixture comparison, and interchange with other toolchains. The CPU
+paths execute a sparse form of the same matrices, with one contiguous band of
+weights for each mel row. Tests compare the sparse projection with the dense
+matrices.
 
-`asr-api` also uses `mel-spec` filterbanks in its Parakeet/TDT frontend. We
-compared that Rust frontend with a CPU TorchScript trace of the original NeMo
-Parakeet featurizer (`featurizer_cpu.pt`). The test used the 11-second, mono
-16 kHz JFK sample on the same M1 Mac.
+### Parakeet/NeMo Frontend Comparison
 
-The benchmark is useful for two reasons:
-
-- It catches frontend contract drift: the first run found a one-frame mismatch
-  (`128x1100` vs `128x1101`) caused by dropping NeMo's final centered/padded
-  frame.
-- After matching the frame count, the Rust features are numerically very close
-  to the traced NeMo frontend.
+`asr-api` uses `BatchLogMelSpectrogram` for its Parakeet/TDT frontend. The
+`parakeet_featurizer_bench` harness in `asr-torch` compares this frontend with a
+CPU TorchScript trace of the NeMo Parakeet featurizer (`featurizer_cpu.pt`). The
+comparison used the JFK sample on an M1 Mac and `mel-spec` 0.4.0.
 
 | Featurizer | Shape | Mean | p50 | p95 | RTFx |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Rust Parakeet frontend using `mel-spec` | `128x1101` | `2.341ms` | `2.334ms` | `2.406ms` | `4699.62` |
+| Rust Parakeet frontend using `mel-spec` 0.4.0 | `128x1101` | `2.341ms` | `2.334ms` | `2.406ms` | `4699.62` |
 | TorchScript CPU trace | `128x1101` | `2.244ms` | `2.206ms` | `2.813ms` | `4902.22` |
 
 Feature comparison across the full tensor:
@@ -172,15 +178,14 @@ Feature comparison across the full tensor:
 | Max absolute error | `3.965733` |
 | Correlation | `0.999719` |
 
-The Rust Parakeet path uses `BatchLogMelSpectrogram` from the existing `mel`
-module. It keeps FFT scratch buffers alive between calls and applies the mel
-filterbank sparsely. This brings the pure Rust frontend close to the traced CPU
-frontend while avoiding the libtorch/PyTorch runtime dependency. The comparison
-harness lives in `asr-torch` as `parakeet_featurizer_bench`.
+The `mel-spec` benchmark gives 2.26 ms for 0.4.1 and 1.13 ms for 0.5.0 in this
+configuration. On the first three seconds of the JFK sample, the 0.5.0 features
+differ from 0.4.1 by a mean absolute difference of 1.2e-6.
 
-The CPU path is the default and is already fast enough for many streaming and
-batch workloads. Experimental native GPU backends are available behind feature
-flags:
+### GPU Backends
+
+The CPU path is the default. Experimental native GPU backends are available
+behind feature flags:
 
 | Feature | Backend |
 | --- | --- |
@@ -194,6 +199,7 @@ crate. Use these commands when changing examples:
 
 ```bash
 cargo test --release
+MEL_SPEC_FUZZ_SCALE=50 cargo test --release fuzz_
 cargo build --release --manifest-path examples/mel_tga/Cargo.toml
 cargo build --release --manifest-path examples/stream_whisper/Cargo.toml
 cargo build --release --manifest-path examples/tga_whisper/Cargo.toml
@@ -201,8 +207,9 @@ cargo run --release --manifest-path examples/vad_ten_eval/Cargo.toml
 (cd examples/browser && npm ci && npm test)
 ```
 
-The Whisper examples compile against the `wavey-ai/whisper-rs` fork and require
-a GGML Whisper model to run inference.
+`MEL_SPEC_FUZZ_SCALE` multiplies the number of cases in the seeded random
+tests. The Whisper examples compile against the `wavey-ai/whisper-rs` fork and
+require a GGML Whisper model to run inference.
 
 ## Hush Demo
 

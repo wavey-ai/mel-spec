@@ -30,6 +30,18 @@ fn readme_fbank_example_runs() {
 }
 
 #[test]
+fn readme_batch_example_runs() {
+    let frontend = BatchLogMelSpectrogram::new(BatchLogMelConfig::default()).unwrap();
+    let mut scratch = frontend.scratch();
+    let samples = vec![0.0_f32; 16_000];
+    let features = frontend
+        .compute_with_scratch(&samples, &mut scratch)
+        .unwrap();
+
+    assert_eq!(features.shape(), &[80, 101]);
+}
+
+#[test]
 fn readme_interleaved_batch_example_runs() {
     let frontend = BatchLogMelSpectrogram::new(BatchLogMelConfig::default()).unwrap();
     let stereo_samples = vec![0.0_f32; 32_000];
