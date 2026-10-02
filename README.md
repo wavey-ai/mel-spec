@@ -216,7 +216,7 @@ require a GGML Whisper model to run inference.
 The Hush live browser demo is active at:
 
 ```text
-https://wavey.ai/code/hush/?v=20260515-35
+https://wavey.ai/code/hush/?v=20261003-36
 ```
 
 The source remains at [wavey-ai/hush](https://github.com/wavey-ai/hush). With
