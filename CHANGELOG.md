@@ -2,7 +2,7 @@
 
 * Bumped the crate as a minor release because feature values change by FFT
   rounding. The public API is compatible with 0.4.1.
-* The README table gives the CPU times before and after these changes.
+* The README release note gives the speedups.
 
 FFT:
 

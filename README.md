@@ -4,17 +4,17 @@
 
 Fast Rust mel spectrogram and VAD primitives for ASR systems.
 
-| Path (11 s JFK sample, Apple M1, one thread) | 0.4.1 | 0.5.0 | Speedup | Max. difference from 0.4.1 |
-| --- | ---: | ---: | ---: | ---: |
-| `BatchLogMelSpectrogram`, Parakeet configuration | 2.28 ms | 1.13 ms | 2.02x | 4.5e-4 |
-| `BatchLogMelSpectrogram`, default configuration | 1.79 ms | 0.95 ms | 1.88x | 3.2e-4 |
-| `Spectrogram::compute_mel_spectrogram_cpu` | 4.00 ms | 1.96 ms | 2.04x | 0 |
-| `Spectrogram::add` and `MelSpectrogram::add` | 4.20 ms | 2.49 ms | 1.68x | 8.4e-14 |
-| `RingBuffer` | 4.23 ms | 2.33 ms | 1.81x | 8.4e-14 |
-| `Fbank::compute` | 3.22 ms | 2.16 ms | 1.49x | 0 |
-| `VoiceActivityDetector::add_activity` | 0.87 ms | 0.23 ms | 3.74x | 0 |
-| `interleave_frames` | 0.25 ms | 0.07 ms | 3.66x | 0 |
-| `SpeechToMel` log-mel step, native build | 19.1 ms | 2.16 ms | 8.8x | 1.0e-11 |
+**Release note:** `0.5.0` makes CPU feature extraction faster. The CPU paths
+use a real-input FFT, and the batch paths project eight frames at a time.
+Results match `0.4.1` within FFT rounding. Details are in
+[CHANGELOG.md](CHANGELOG.md).
+
+| Speedup (11 s JFK sample, one Apple M1 core) | |
+| --- | ---: |
+| Batch log-mel | 1.9-2.0x |
+| Whisper mel | 1.7-2.0x |
+| Kaldi fbank | 1.5x |
+| VAD | 3.7x |
 
 `mel-spec` contains low-cost, predictable components for speech pipelines. The
 components are:
