@@ -7,6 +7,8 @@ pub mod prelude;
 pub mod quant;
 pub mod rb;
 pub mod stft;
+#[cfg(test)]
+mod test_support;
 pub mod vad;
 #[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm;

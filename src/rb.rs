@@ -128,14 +128,9 @@ impl RingBuffer {
         }
 
         // we have enough to do one frame
-        let mut frame = Vec::new();
-        std::mem::swap(&mut frame, &mut self.accumulated_samples);
-
-        let fft_res = self.fft.add(&frame);
-        match fft_res {
-            Some(fft) => Some(self.mel.add(&fft)),
-            None => None,
-        }
+        let spectrum = self.fft.add_half(&self.accumulated_samples);
+        self.accumulated_samples.clear();
+        spectrum.map(|spectrum| self.mel.add_spectrum(spectrum, self.config.fft_size() / 2))
     }
 }
 
@@ -143,9 +138,11 @@ impl RingBuffer {
 mod tests {
     use super::*;
     use crate::mel::interleave_frames;
+    use crate::test_support::{fuzz_cases, Rng};
     use ndarray::{Array2, Zip};
     use ndarray_npy::read_npy;
     use soundkit::{audio_bytes::deinterleave_vecs_f32, wav::WavStreamProcessor};
+    use std::collections::VecDeque as ModelBuffer;
     use std::fs::File;
     use std::io::Read;
 
@@ -237,5 +234,55 @@ mod tests {
         let buffered = rb.buffer.iter().copied().collect::<Vec<_>>();
 
         assert_eq!(buffered, vec![2.0, 3.0, 4.0]);
+    }
+
+    /// The ring buffer must give the frames of the public streaming API for
+    /// random write sizes, overflows, and read patterns.
+    #[test]
+    fn fuzz_ringbuffer_matches_streaming_model() {
+        let mut rng = Rng::new(10);
+        for case in 0..fuzz_cases(80) {
+            let fft_size = rng.range(8, 600);
+            let hop_size = rng.range(1, fft_size);
+            let n_mels = rng.range(1, 80);
+            let capacity = rng.range(1, fft_size * 4);
+            let config = MelConfig::new(fft_size, hop_size, n_mels, 16_000.0);
+            let mut rb = RingBuffer::new(config, capacity);
+
+            let mut buffer = ModelBuffer::new();
+            let mut pending = Vec::new();
+            let mut stft = stft::Spectrogram::new(fft_size, hop_size);
+            let mut mel = MelSpectrogram::new(fft_size, 16_000.0, n_mels);
+
+            for step in 0..rng.range(1, 60) {
+                let write = rng.range(0, capacity * 2);
+                let samples = rng.signal(write);
+                rb.add_frame(&samples);
+                for sample in samples {
+                    if buffer.len() == capacity {
+                        buffer.pop_front();
+                    }
+                    buffer.push_back(sample);
+                }
+
+                for read in 0..rng.range(0, 3) {
+                    let got = rb.maybe_mel();
+                    while pending.len() < hop_size {
+                        match buffer.pop_front() {
+                            Some(sample) => pending.push(sample),
+                            None => break,
+                        }
+                    }
+                    let want = if pending.len() < hop_size {
+                        None
+                    } else {
+                        let frame = stft.add(&pending).map(|fft| mel.add(&fft));
+                        pending.clear();
+                        frame
+                    };
+                    assert_eq!(got, want, "case {case} step {step} read {read}");
+                }
+            }
+        }
     }
 }

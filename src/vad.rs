@@ -81,10 +81,27 @@ impl DetectionSettings {
 }
 
 pub struct VoiceActivityDetector {
+    /// The last `min_x` frames, oldest first.
     mel_buffer: Vec<Array2<f64>>,
     settings: DetectionSettings,
     frame_index: usize,
     timing: Option<VadFrameTiming>,
+    scratch: VadScratch,
+    /// Raw classification of the column triple that starts at each buffered
+    /// frame. It is valid only while every buffered frame is one column of the
+    /// same height, which is the streaming case: a new frame then needs only
+    /// one new triple.
+    column_cache: Vec<bool>,
+    column_cache_valid: bool,
+}
+
+/// Buffers reused across [`VoiceActivityDetector::add_activity`] calls.
+#[derive(Default)]
+struct VadScratch {
+    columns: Vec<ColumnSource>,
+    raw: Vec<bool>,
+    prefix_true: Vec<usize>,
+    smoothed: Vec<bool>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -143,6 +160,9 @@ impl VoiceActivityDetector {
             settings: settings.to_owned(),
             frame_index: 0,
             timing: None,
+            scratch: VadScratch::default(),
+            column_cache: Vec::new(),
+            column_cache_valid: false,
         }
     }
 
@@ -164,28 +184,45 @@ impl VoiceActivityDetector {
         self.frame_index = self.frame_index.wrapping_add(1);
 
         let min_x = self.settings.min_x;
-        self.mel_buffer.push(frame.to_owned());
-        let max_buffered_frames = min_x.max(128);
-        if self.mel_buffer.len() > max_buffered_frames {
-            let keep_from = self.mel_buffer.len().saturating_sub(min_x);
-            self.mel_buffer.drain(..keep_from);
+        if min_x > 0 {
+            let removed_oldest = self.mel_buffer.len() == min_x;
+            if removed_oldest {
+                // Reuse the storage of the oldest frame for the new frame.
+                let mut oldest = self.mel_buffer.remove(0);
+                if oldest.dim() == frame.dim() {
+                    oldest.assign(frame);
+                } else {
+                    oldest = frame.as_standard_layout().into_owned();
+                }
+                self.mel_buffer.push(oldest);
+            } else {
+                self.mel_buffer
+                    .push(frame.as_standard_layout().into_owned());
+            }
+            self.update_column_cache(removed_oldest);
         }
         if self.mel_buffer.len() < min_x {
             return None;
         }
 
         // check if we are at cutable frame position
-        let window = &self.mel_buffer[self.mel_buffer.len() - min_x..];
-        let edge_info = vad_boundaries(&window, &self.settings);
-        let intersected = &edge_info.intersected_columns;
-        let active_columns = intersected.len();
-        let window_columns = active_columns + edge_info.non_intersected_columns.len();
-        let leading_active_columns = leading_active_columns(intersected);
-        let active = if intersected.is_empty() {
-            false
+        if self.column_cache_valid {
+            self.scratch.raw.clear();
+            self.scratch.raw.extend_from_slice(&self.column_cache);
+            smooth_mask(
+                &self.scratch.raw,
+                4,
+                &mut self.scratch.prefix_true,
+                &mut self.scratch.smoothed,
+            );
         } else {
-            intersected[0] == 0
-        };
+            classify_window(&self.mel_buffer, &self.settings, &mut self.scratch);
+        }
+        let smoothed = &self.scratch.smoothed;
+        let active_columns = smoothed.iter().filter(|active| **active).count();
+        let window_columns = smoothed.len();
+        let leading_active_columns = smoothed.iter().take_while(|active| **active).count();
+        let active = smoothed.first().copied().unwrap_or(false);
 
         Some(VoiceActivity {
             active,
@@ -203,22 +240,71 @@ impl VoiceActivityDetector {
                 .map(|timing| timing.timestamps_for_frame(frame_index)),
         })
     }
+
+    /// Updates `column_cache` after the newest frame was appended and, if
+    /// `removed_oldest`, the oldest frame was dropped.
+    fn update_column_cache(&mut self, removed_oldest: bool) {
+        let height = self.mel_buffer[0].nrows();
+        let single_column = |frame: &Array2<f64>| frame.ncols() == 1 && frame.nrows() == height;
+        // Single-column windows of fewer than 3 frames have no column triple,
+        // and classify_window handles them.
+        let cacheable = self.settings.min_x >= 3 && height >= 3;
+
+        let newest = self.mel_buffer.len() - 1;
+        if self.column_cache_valid && cacheable && single_column(&self.mel_buffer[newest]) {
+            if removed_oldest && !self.column_cache.is_empty() {
+                self.column_cache.remove(0);
+            }
+            if self.mel_buffer.len() >= 3 {
+                let active = self.classify_triple(newest - 2);
+                self.column_cache.push(active);
+            }
+            return;
+        }
+
+        self.column_cache.clear();
+        self.column_cache_valid = cacheable && self.mel_buffer.iter().all(single_column);
+        if self.column_cache_valid {
+            for start in 0..self.mel_buffer.len().saturating_sub(2) {
+                let active = self.classify_triple(start);
+                self.column_cache.push(active);
+            }
+        }
+    }
+
+    /// Raw classification of the single-column frames `start..start + 3`.
+    fn classify_triple(&self, start: usize) -> bool {
+        const COLUMNS: [ColumnSource; 3] = [
+            ColumnSource {
+                frame_index: 0,
+                local_x: 0,
+            },
+            ColumnSource {
+                frame_index: 1,
+                local_x: 0,
+            },
+            ColumnSource {
+                frame_index: 2,
+                local_x: 0,
+            },
+        ];
+        let frames = &self.mel_buffer[start..start + 3];
+        let mut active = [false];
+        classify_columns_across_frames(
+            frames,
+            &COLUMNS,
+            frames[0].nrows(),
+            self.settings.min_mel,
+            self.settings.min_y,
+            self.settings.min_energy * self.settings.min_energy,
+            &mut active,
+        );
+        active[0]
+    }
 }
 
 fn sample_to_ms(sample: usize, sampling_rate: f64) -> usize {
     ((sample as f64 / sampling_rate) * 1000.0).round() as usize
-}
-
-fn leading_active_columns(intersected: &[usize]) -> usize {
-    let mut expected = 0;
-    for &column in intersected {
-        if column == expected {
-            expected += 1;
-        } else if column > expected {
-            break;
-        }
-    }
-    expected
 }
 
 pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
@@ -249,77 +335,13 @@ pub fn vad_on(edge_info: &EdgeInfo, n: usize) -> bool {
 }
 
 pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> EdgeInfo {
-    let Some(first_frame) = frames.first() else {
-        return EdgeInfo::new(Vec::new(), Vec::new(), HashSet::new());
-    };
-
-    let height = first_frame.nrows();
-    let width: usize = frames
-        .iter()
-        .map(|frame| {
-            debug_assert_eq!(frame.nrows(), height);
-            frame.ncols()
-        })
-        .sum();
-
-    if height < 3 || width < 3 {
-        return EdgeInfo::new(Vec::new(), Vec::new(), HashSet::new());
-    }
-
-    let mut raw_classification = vec![false; width - 2];
-    let min_energy_sq = settings.min_energy * settings.min_energy;
-
-    if frames.len() == 1 {
-        let frame = &frames[0];
-        let data = frame
-            .as_slice()
-            .expect("VAD expects contiguous spectrogram frames");
-        classify_columns_in_frame(
-            data,
-            frame.ncols(),
-            height,
-            settings.min_mel,
-            settings.min_y,
-            min_energy_sq,
-            &mut raw_classification,
-        );
-    } else {
-        let mut frame_infos = Vec::with_capacity(frames.len());
-        let mut column_sources = Vec::with_capacity(width);
-
-        for frame in frames {
-            let frame_index = frame_infos.len();
-            frame_infos.push(FrameInfo {
-                data: frame
-                    .as_slice()
-                    .expect("VAD expects contiguous spectrogram frames"),
-                width: frame.ncols(),
-            });
-            column_sources.extend((0..frame.ncols()).map(|local_x| ColumnSource {
-                frame_index,
-                local_x,
-            }));
-        }
-
-        classify_columns_across_frames(
-            &frame_infos,
-            &column_sources,
-            height,
-            settings.min_mel,
-            settings.min_y,
-            min_energy_sq,
-            &mut raw_classification,
-        );
-    }
-
-    // Apply temporal smoothing via a moving-window majority vote.
-    // For each index, we consider a window of neighboring columns (window size can be adjusted).
-    let smoothed_classification = smooth_mask(&raw_classification, 4);
+    let mut scratch = VadScratch::default();
+    classify_window(frames, settings, &mut scratch);
 
     // Split the smoothed results into active (intersected) and inactive (non-intersected) columns.
     let mut intersected_columns = Vec::new();
     let mut non_intersected_columns = Vec::new();
-    for (x, &active) in smoothed_classification.iter().enumerate() {
+    for (x, &active) in scratch.smoothed.iter().enumerate() {
         if active {
             intersected_columns.push(x);
         } else {
@@ -337,37 +359,125 @@ pub fn vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -> E
     )
 }
 
+/// Classifies each column of the window and writes the smoothed mask to
+/// `scratch.smoothed`. The mask is empty when the window is too small.
+fn classify_window(frames: &[Array2<f64>], settings: &DetectionSettings, scratch: &mut VadScratch) {
+    scratch.raw.clear();
+    scratch.smoothed.clear();
+
+    let Some(first_frame) = frames.first() else {
+        return;
+    };
+
+    // The column classifiers read each frame as a row-major slice.
+    if frames.iter().any(|frame| !frame.is_standard_layout()) {
+        let frames = frames
+            .iter()
+            .map(|frame| frame.as_standard_layout().into_owned())
+            .collect::<Vec<_>>();
+        classify_window(&frames, settings, scratch);
+        return;
+    }
+
+    let height = first_frame.nrows();
+    let width: usize = frames
+        .iter()
+        .map(|frame| {
+            debug_assert_eq!(frame.nrows(), height);
+            frame.ncols()
+        })
+        .sum();
+
+    if height < 3 || width < 3 {
+        return;
+    }
+
+    scratch.raw.resize(width - 2, false);
+    let min_energy_sq = settings.min_energy * settings.min_energy;
+
+    if frames.len() == 1 {
+        let frame = &frames[0];
+        let data = frame
+            .as_slice()
+            .expect("VAD expects contiguous spectrogram frames");
+        classify_columns_in_frame(
+            data,
+            frame.ncols(),
+            height,
+            settings.min_mel,
+            settings.min_y,
+            min_energy_sq,
+            &mut scratch.raw,
+        );
+    } else {
+        scratch.columns.clear();
+        for (frame_index, frame) in frames.iter().enumerate() {
+            scratch
+                .columns
+                .extend((0..frame.ncols()).map(|local_x| ColumnSource {
+                    frame_index,
+                    local_x,
+                }));
+        }
+
+        classify_columns_across_frames(
+            frames,
+            &scratch.columns,
+            height,
+            settings.min_mel,
+            settings.min_y,
+            min_energy_sq,
+            &mut scratch.raw,
+        );
+    }
+
+    // Apply temporal smoothing via a moving-window majority vote.
+    // For each index, we consider a window of neighboring columns (window size can be adjusted).
+    smooth_mask(
+        &scratch.raw,
+        4,
+        &mut scratch.prefix_true,
+        &mut scratch.smoothed,
+    );
+}
+
 /// Applies a simple temporal smoothing (moving-window majority vote) over a binary mask.
 /// For each index, we look at the window of values [i-window, i+window] and set the smoothed
 /// value to true if at least half of the values in that window are true.
-fn smooth_mask(mask: &[bool], window: usize) -> Vec<bool> {
+fn smooth_mask(
+    mask: &[bool],
+    window: usize,
+    prefix_true: &mut Vec<usize>,
+    smoothed: &mut Vec<bool>,
+) {
     let n = mask.len();
-    let mut prefix_true = vec![0usize; n + 1];
-    for (i, &value) in mask.iter().enumerate() {
-        prefix_true[i + 1] = prefix_true[i] + usize::from(value);
+    prefix_true.clear();
+    prefix_true.push(0);
+    let mut count = 0;
+    for &value in mask {
+        count += usize::from(value);
+        prefix_true.push(count);
     }
 
-    let mut smoothed = vec![false; n];
-    for i in 0..n {
+    smoothed.clear();
+    smoothed.extend((0..n).map(|i| {
         let start = i.saturating_sub(window);
         let end = (i + window + 1).min(n);
         let count_true = prefix_true[end] - prefix_true[start];
-        if count_true * 2 >= (end - start) {
-            smoothed[i] = true;
-        }
-    }
-    smoothed
-}
-
-struct FrameInfo<'a> {
-    data: &'a [f64],
-    width: usize,
+        count_true * 2 >= (end - start)
+    }));
 }
 
 #[derive(Copy, Clone)]
 struct ColumnSource {
     frame_index: usize,
     local_x: usize,
+}
+
+fn frame_data(frame: &Array2<f64>) -> &[f64] {
+    frame
+        .as_slice()
+        .expect("VAD expects contiguous spectrogram frames")
 }
 
 fn classify_columns_in_frame(
@@ -403,7 +513,7 @@ fn classify_columns_in_frame(
             let bc = frame[row2 + x + 1];
             let br = frame[row2 + x + 2];
 
-            if sobel_gradient_sq(tl, tc, tr, ml, mr, bl, bc, br) >= min_energy_sq {
+            if sobel_gradient_sq([tl, tc, tr], [ml, mr], [bl, bc, br]) >= min_energy_sq {
                 count += 1;
                 if count >= min_y {
                     *is_active = true;
@@ -415,7 +525,7 @@ fn classify_columns_in_frame(
 }
 
 fn classify_columns_across_frames(
-    frames: &[FrameInfo<'_>],
+    frames: &[Array2<f64>],
     columns: &[ColumnSource],
     height: usize,
     min_mel: usize,
@@ -434,31 +544,40 @@ fn classify_columns_across_frames(
         let c0 = columns[x];
         let c1 = columns[x + 1];
         let c2 = columns[x + 2];
-        let f0 = &frames[c0.frame_index];
-        let f1 = &frames[c1.frame_index];
-        let f2 = &frames[c2.frame_index];
+        let (f0, w0) = (
+            frame_data(&frames[c0.frame_index]),
+            frames[c0.frame_index].ncols(),
+        );
+        let (f1, w1) = (
+            frame_data(&frames[c1.frame_index]),
+            frames[c1.frame_index].ncols(),
+        );
+        let (f2, w2) = (
+            frame_data(&frames[c2.frame_index]),
+            frames[c2.frame_index].ncols(),
+        );
         let mut count = 0;
 
         for y in start_y..(height - 2) {
-            let row00 = (y * f0.width) + c0.local_x;
-            let row01 = (y * f1.width) + c1.local_x;
-            let row02 = (y * f2.width) + c2.local_x;
-            let row10 = row00 + f0.width;
-            let row12 = row02 + f2.width;
-            let row20 = row10 + f0.width;
-            let row21 = row01 + (2 * f1.width);
-            let row22 = row12 + f2.width;
+            let row00 = (y * w0) + c0.local_x;
+            let row01 = (y * w1) + c1.local_x;
+            let row02 = (y * w2) + c2.local_x;
+            let row10 = row00 + w0;
+            let row12 = row02 + w2;
+            let row20 = row10 + w0;
+            let row21 = row01 + (2 * w1);
+            let row22 = row12 + w2;
 
-            let tl = f0.data[row00];
-            let tc = f1.data[row01];
-            let tr = f2.data[row02];
-            let ml = f0.data[row10];
-            let mr = f2.data[row12];
-            let bl = f0.data[row20];
-            let bc = f1.data[row21];
-            let br = f2.data[row22];
+            let tl = f0[row00];
+            let tc = f1[row01];
+            let tr = f2[row02];
+            let ml = f0[row10];
+            let mr = f2[row12];
+            let bl = f0[row20];
+            let bc = f1[row21];
+            let br = f2[row22];
 
-            if sobel_gradient_sq(tl, tc, tr, ml, mr, bl, bc, br) >= min_energy_sq {
+            if sobel_gradient_sq([tl, tc, tr], [ml, mr], [bl, bc, br]) >= min_energy_sq {
                 count += 1;
                 if count >= min_y {
                     *is_active = true;
@@ -469,17 +588,9 @@ fn classify_columns_across_frames(
     }
 }
 
+/// Squared Sobel gradient of a 3x3 neighborhood without its center value.
 #[inline]
-fn sobel_gradient_sq(
-    tl: f64,
-    tc: f64,
-    tr: f64,
-    ml: f64,
-    mr: f64,
-    bl: f64,
-    bc: f64,
-    br: f64,
-) -> f64 {
+fn sobel_gradient_sq([tl, tc, tr]: [f64; 3], [ml, mr]: [f64; 2], [bl, bc, br]: [f64; 3]) -> f64 {
     let gradient_x = (tr + (2.0 * mr) + br) - (tl + (2.0 * ml) + bl);
     let gradient_y = (bl + (2.0 * bc) + br) - (tl + (2.0 * tc) + tr);
     (gradient_x * gradient_x) + (gradient_y * gradient_y)
@@ -559,7 +670,7 @@ pub fn as_image(
                 }
             }
 
-            let inverted_y = height.checked_sub(y + 3).unwrap_or(0);
+            let inverted_y = height.saturating_sub(y + 3);
             if gradient_positions.contains(&(x, inverted_y)) {
                 let tint = Rgb([tint_value, 0, 0]);
                 rgb_pixel = Rgb([
@@ -608,6 +719,8 @@ pub fn format_milliseconds(milliseconds: u64) -> String {
 mod tests {
     use super::*;
     use crate::quant::{load_tga_8bit, to_array2};
+    use crate::test_support::{fuzz_cases, Rng};
+    use ndarray::ShapeBuilder;
 
     #[test]
     fn test_detection_settings_default() {
@@ -635,9 +748,9 @@ mod tests {
             let dequantized_mel = load_tga_8bit(&file_path).unwrap();
             let frames = to_array2(&dequantized_mel, n_mels);
 
-            let edge_info = vad_boundaries(&[frames.clone()], &settings);
+            let edge_info = vad_boundaries(std::slice::from_ref(&frames), &settings);
             dbg!(file_path);
-            assert!(vad_on(&edge_info, min_x) == false);
+            assert!(!vad_on(&edge_info, min_x));
         }
 
         let ids = vec![11648, 2889, 4694, 4901, 27125];
@@ -646,8 +759,8 @@ mod tests {
             let dequantized_mel = load_tga_8bit(&file_path).unwrap();
             let frames = to_array2(&dequantized_mel, n_mels);
 
-            let edge_info = vad_boundaries(&[frames.clone()], &settings);
-            assert!(vad_on(&edge_info, min_x) == true);
+            let edge_info = vad_boundaries(std::slice::from_ref(&frames), &settings);
+            assert!(vad_on(&edge_info, min_x));
 
             //assert!(edge_info.gradient_count > 800);
         }
@@ -669,12 +782,12 @@ mod tests {
         let dequantized_mel = load_tga_8bit(file_path).unwrap();
         let frames = to_array2(&dequantized_mel, n_mels);
 
-        let edge_info = vad_boundaries(&[frames.clone()], &settings);
+        let edge_info = vad_boundaries(std::slice::from_ref(&frames), &settings);
 
         let elapsed = start.elapsed().as_millis();
         eprintln!("test_vad_debug elapsed={elapsed}ms");
         let img = as_image(
-            &[frames.clone()],
+            std::slice::from_ref(&frames),
             &edge_info.non_intersected(),
             &edge_info.gradient_positions(),
         );
@@ -698,7 +811,7 @@ mod tests {
 
         let frames = to_array2(&dequantized_mel, n_mels);
 
-        let edge_info = vad_boundaries(&[frames.clone()], &settings);
+        let edge_info = vad_boundaries(std::slice::from_ref(&frames), &settings);
 
         let elapsed = start.elapsed().as_millis();
         eprintln!("test_vad_boundaries elapsed={elapsed}ms");
@@ -729,9 +842,110 @@ mod tests {
         let start = std::time::Instant::now();
 
         for mel in &chunks {
-            if let Some(_) = stage.add(&mel) {}
+            let _ = stage.add(mel).is_some();
         }
         let elapsed = start.elapsed().as_millis();
         eprintln!("test_stage elapsed={elapsed}ms");
+    }
+
+    fn random_frame(rng: &mut Rng, height: usize, width: usize) -> Array2<f64> {
+        let scale = [0.1, 1.0, 4.0][rng.range(0, 2)];
+        let flat = rng.chance(0.2);
+        let column_major = rng.chance(0.2);
+        Array2::from_shape_fn((height, width).set_f(column_major), |_| {
+            if flat {
+                1.0
+            } else {
+                rng.unit() * scale
+            }
+        })
+    }
+
+    fn random_settings(rng: &mut Rng, height: usize) -> DetectionSettings {
+        DetectionSettings {
+            min_energy: [0.0, 0.5, 0.98, 2.0, rng.unit() * 3.0][rng.range(0, 4)],
+            min_y: rng.range(0, 12),
+            min_x: rng.range(0, 12),
+            min_mel: rng.range(0, height + 2),
+        }
+    }
+
+    /// Streaming decisions must equal `vad_boundaries` over the last `min_x`
+    /// frames, for single-column and multi-column frames.
+    #[test]
+    fn fuzz_streaming_vad_matches_window_boundaries() {
+        let mut rng = Rng::new(8);
+        for case in 0..fuzz_cases(200) {
+            let height = if rng.chance(0.1) {
+                rng.range(1, 2)
+            } else {
+                rng.range(3, 40)
+            };
+            let settings = random_settings(&mut rng, height);
+            let multi_column = rng.chance(0.3);
+            let frames = (0..rng.range(0, 60))
+                .map(|_| {
+                    let width = if multi_column && rng.chance(0.2) {
+                        rng.range(2, 3)
+                    } else {
+                        1
+                    };
+                    random_frame(&mut rng, height, width)
+                })
+                .collect::<Vec<_>>();
+
+            let mut vad = VoiceActivityDetector::new(&settings);
+            for (frame_idx, frame) in frames.iter().enumerate() {
+                let label = format!("case {case} frame {frame_idx}");
+                let activity = vad.add_activity(frame);
+                if frame_idx + 1 < settings.min_x {
+                    assert!(activity.is_none(), "{label}");
+                    continue;
+                }
+                let activity = activity.unwrap_or_else(|| panic!("{label}: missing decision"));
+                let window = &frames[frame_idx + 1 - settings.min_x..=frame_idx];
+                let edge_info = vad_boundaries(window, &settings);
+                let intersected = edge_info.intersected();
+                let window_columns = intersected.len() + edge_info.non_intersected().len();
+                let leading = intersected
+                    .iter()
+                    .enumerate()
+                    .take_while(|(expected, column)| *expected == **column)
+                    .count();
+                assert_eq!(activity.frame_index, frame_idx, "{label}");
+                assert_eq!(activity.active, intersected.first() == Some(&0), "{label}");
+                assert_eq!(activity.active_columns, intersected.len(), "{label}");
+                assert_eq!(activity.window_columns, window_columns, "{label}");
+                assert_eq!(activity.leading_active_columns, leading, "{label}");
+            }
+        }
+    }
+
+    /// `vad_boundaries` classifies a list of frames and the same columns in
+    /// one frame through different code paths. Both must agree.
+    #[test]
+    fn fuzz_vad_boundaries_frame_split_does_not_change_result() {
+        let mut rng = Rng::new(9);
+        for case in 0..fuzz_cases(300) {
+            let height = rng.range(1, 30);
+            let settings = random_settings(&mut rng, height);
+            let frames = (0..rng.range(1, 12))
+                .map(|_| {
+                    let width = rng.range(1, 4);
+                    random_frame(&mut rng, height, width)
+                })
+                .collect::<Vec<_>>();
+            let views = frames.iter().map(|frame| frame.view()).collect::<Vec<_>>();
+            let joined = concatenate(Axis(1), &views).unwrap();
+
+            let split = vad_boundaries(&frames, &settings);
+            let whole = vad_boundaries(&[joined], &settings);
+            assert_eq!(split.intersected(), whole.intersected(), "case {case}");
+            assert_eq!(
+                split.non_intersected(),
+                whole.non_intersected(),
+                "case {case}"
+            );
+        }
     }
 }

@@ -12,12 +12,12 @@
 //! - `preemphasis`: 0.97
 //! - `remove_dc_offset`: true
 
-use ndarray::Array2;
-use rustfft::{num_complex::Complex, Fft, FftPlanner};
+use ndarray::{Array2, ArrayView1};
+use realfft::{RealFftPlanner, RealToComplex};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use crate::mel::SparseMelFilterbank;
+use crate::mel::{SparseMelFilterbank, FRAME_LANES};
 
 /// Configuration for Kaldi-compatible filterbank extraction.
 #[derive(Clone, Debug)]
@@ -85,7 +85,7 @@ pub struct Fbank {
     config: FbankConfig,
     mel_filters: Array2<f64>,
     sparse_mel_filters: SparseMelFilterbank,
-    fft: Arc<dyn Fft<f64>>,
+    fft: Arc<dyn RealToComplex<f64>>,
     window: Vec<f64>,
 }
 
@@ -118,7 +118,7 @@ impl Fbank {
         );
         let sparse_mel_filters = SparseMelFilterbank::from_dense(&mel_filters);
 
-        let mut planner = FftPlanner::new();
+        let mut planner = RealFftPlanner::new();
         let fft = planner.plan_fft_forward(fft_size);
 
         Self {
@@ -140,98 +140,135 @@ impl Fbank {
     pub fn compute(&self, samples: &[f32]) -> Array2<f32> {
         let frame_len = self.config.frame_length_samples();
         let frame_shift = self.config.frame_shift_samples();
-        let fft_size = self.config.fft_size();
+        let num_mel_bins = self.config.num_mel_bins;
         let preemph = self.config.preemphasis;
 
         if samples.len() < frame_len {
-            return Array2::zeros((0, self.config.num_mel_bins));
+            return Array2::zeros((0, num_mel_bins));
         }
 
         let num_frames = 1 + (samples.len() - frame_len) / frame_shift;
-        let mut features = Array2::zeros((num_frames, self.config.num_mel_bins));
+        if num_mel_bins == 0 {
+            return Array2::zeros((num_frames, 0));
+        }
+        let mut features = vec![0.0f32; num_frames * num_mel_bins];
 
-        let mut complex_buf = vec![Complex::new(0.0, 0.0); fft_size];
-        let mut scratch_buf = vec![Complex::new(0.0, 0.0); self.fft.get_inplace_scratch_len()];
+        let mut fft_input = self.fft.make_input_vec();
+        let mut spectrum = self.fft.make_output_vec();
+        let mut scratch_buf = self.fft.make_scratch_vec();
         let mut frame_buf = vec![0.0f64; frame_len];
-        let mut power_spectrum = vec![0.0f64; fft_size / 2 + 1];
-        let mut mel_energies = vec![0.0f64; self.config.num_mel_bins];
+        // Power spectra and mel energies of FRAME_LANES frames, interleaved
+        // by bin and by mel, for the batched projection.
+        let mut power_spectra = vec![0.0f64; spectrum.len() * FRAME_LANES];
+        let mut mel_energies = vec![0.0f64; num_mel_bins * FRAME_LANES];
 
-        for frame_idx in 0..num_frames {
-            let start = frame_idx * frame_shift;
-            let end = start + frame_len;
+        // Kaldi uses FLT_EPSILON (f32::EPSILON ≈ 1.19e-7) as minimum to avoid log(0)
+        let floor = if self.config.energy_floor > 0.0 {
+            self.config.energy_floor
+        } else {
+            f32::EPSILON as f64 // ~1.19e-7, matches kaldi FLT_EPSILON
+        };
 
-            // Copy frame and subtract mean (DC removal)
-            let frame_slice = &samples[start..end];
-            let mean: f64 = frame_slice.iter().map(|&x| x as f64).sum::<f64>() / frame_len as f64;
-            for (i, &sample) in frame_slice.iter().enumerate() {
-                frame_buf[i] = sample as f64 - mean;
-            }
+        for (group_idx, group_features) in
+            features.chunks_mut(num_mel_bins * FRAME_LANES).enumerate()
+        {
+            for lane in 0..group_features.len() / num_mel_bins {
+                let start = ((group_idx * FRAME_LANES) + lane) * frame_shift;
+                let end = start + frame_len;
 
-            // Apply preemphasis: y[n] = x[n] - preemph * x[n-1]
-            if preemph > 0.0 {
-                // Process in reverse to avoid overwriting
-                for i in (1..frame_len).rev() {
-                    frame_buf[i] -= preemph * frame_buf[i - 1];
+                // Copy frame and subtract mean (DC removal)
+                let frame_slice = &samples[start..end];
+                let mean: f64 =
+                    frame_slice.iter().map(|&x| x as f64).sum::<f64>() / frame_len as f64;
+                for (i, &sample) in frame_slice.iter().enumerate() {
+                    frame_buf[i] = sample as f64 - mean;
                 }
-                // First sample: use sample from before this frame if available
-                if start > 0 {
-                    frame_buf[0] -= preemph * (samples[start - 1] as f64 - mean);
+
+                // Apply preemphasis: y[n] = x[n] - preemph * x[n-1]
+                if preemph > 0.0 {
+                    // Process in reverse to avoid overwriting
+                    for i in (1..frame_len).rev() {
+                        frame_buf[i] -= preemph * frame_buf[i - 1];
+                    }
+                    // First sample: use sample from before this frame if available
+                    if start > 0 {
+                        frame_buf[0] -= preemph * (samples[start - 1] as f64 - mean);
+                    }
                 }
-            }
 
-            // Apply window and prepare FFT buffer
-            for (i, &sample) in frame_buf.iter().enumerate() {
-                complex_buf[i] = Complex::new(sample * self.window[i], 0.0);
-            }
-            // Zero-pad to FFT size
-            for i in frame_len..fft_size {
-                complex_buf[i] = Complex::new(0.0, 0.0);
-            }
+                // Apply window and zero-pad to FFT size
+                for ((input, sample), weight) in
+                    fft_input.iter_mut().zip(&frame_buf).zip(&self.window)
+                {
+                    *input = sample * weight;
+                }
+                fft_input[frame_len..].fill(0.0);
 
-            // FFT
-            self.fft
-                .process_with_scratch(&mut complex_buf, &mut scratch_buf);
+                // FFT (only positive frequencies)
+                self.fft
+                    .process_with_scratch(&mut fft_input, &mut spectrum, &mut scratch_buf)
+                    .expect("buffers are sized for the FFT plan");
 
-            // Power spectrum (only positive frequencies)
-            for (i, c) in complex_buf.iter().take(fft_size / 2 + 1).enumerate() {
-                power_spectrum[i] = if self.config.use_power {
-                    c.norm_sqr()
+                let lanes = power_spectra.chunks_exact_mut(FRAME_LANES).zip(&spectrum);
+                if self.config.use_power {
+                    for (frames, c) in lanes {
+                        frames[lane] = c.norm_sqr();
+                    }
                 } else {
-                    c.norm()
-                };
+                    for (frames, c) in lanes {
+                        frames[lane] = c.norm();
+                    }
+                }
             }
 
+            // Lanes past the last frame hold stale spectra and are not read.
             self.sparse_mel_filters
-                .project_power_f64(&power_spectrum, &mut mel_energies);
-            for (mel_idx, mel_energy) in mel_energies.iter_mut().enumerate() {
-                // Apply energy floor and log
-                // Kaldi uses FLT_EPSILON (f32::EPSILON ≈ 1.19e-7) as minimum to avoid log(0)
-                let floor = if self.config.energy_floor > 0.0 {
-                    self.config.energy_floor
-                } else {
-                    f32::EPSILON as f64 // ~1.19e-7, matches kaldi FLT_EPSILON
-                };
-                *mel_energy = (*mel_energy).max(floor);
-                if self.config.use_log_fbank {
-                    *mel_energy = mel_energy.ln();
+                .project_frames_f64::<FRAME_LANES>(&power_spectra, &mut mel_energies);
+            for (lane, frame_features) in group_features.chunks_exact_mut(num_mel_bins).enumerate()
+            {
+                for (feature, energies) in frame_features
+                    .iter_mut()
+                    .zip(mel_energies.chunks_exact(FRAME_LANES))
+                {
+                    // Apply energy floor and log
+                    let mut mel_energy = energies[lane].max(floor);
+                    if self.config.use_log_fbank {
+                        mel_energy = mel_energy.ln();
+                    }
+                    *feature = mel_energy as f32;
                 }
-
-                features[[frame_idx, mel_idx]] = *mel_energy as f32;
             }
         }
 
         // CMN: subtract mean across time for each frequency bin
         // This matches kaldi's CMN: features - np.mean(features, axis=0)
+        // The sums run row by row, which keeps the frame order of each
+        // column sum and reads the features contiguously.
         if self.config.apply_cmn && num_frames > 0 {
-            for mel_idx in 0..self.config.num_mel_bins {
-                let mean: f32 = features.column(mel_idx).mean().unwrap_or(0.0);
-                for frame_idx in 0..num_frames {
-                    features[[frame_idx, mel_idx]] -= mean;
+            let mut means = vec![0.0f32; num_mel_bins];
+            if num_mel_bins == 1 {
+                // A single column is contiguous, and ndarray sums contiguous
+                // data with an unrolled fold. This keeps that summation order.
+                means[0] = ArrayView1::from(&features[..]).mean().unwrap_or(0.0);
+            } else {
+                for frame_features in features.chunks_exact(num_mel_bins) {
+                    for (sum, feature) in means.iter_mut().zip(frame_features) {
+                        *sum += feature;
+                    }
+                }
+                for mean in means.iter_mut() {
+                    *mean /= num_frames as f32;
+                }
+            }
+            for frame_features in features.chunks_exact_mut(num_mel_bins) {
+                for (feature, mean) in frame_features.iter_mut().zip(&means) {
+                    *feature -= mean;
                 }
             }
         }
 
-        features
+        Array2::from_shape_vec((num_frames, num_mel_bins), features)
+            .expect("feature buffer matches the frame and mel counts")
     }
 
     /// Get the configuration.
@@ -314,6 +351,7 @@ fn mel_to_hz(mel: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{fuzz_cases, same_f32, Rng};
     use ndarray_npy::NpzReader;
     use std::fs::File;
     use std::io::Read;
@@ -343,7 +381,7 @@ mod tests {
 
             pos += 8 + chunk_size;
             // Chunks are word-aligned (2-byte boundary)
-            if chunk_size % 2 != 0 {
+            if chunk_size % 2 == 1 {
                 pos += 1;
             }
         }
@@ -413,7 +451,7 @@ mod tests {
             .sparse_mel_filters
             .project_power_f64(&power_spectrum, &mut sparse);
 
-        for mel_idx in 0..fbank.config.num_mel_bins {
+        for (mel_idx, sparse) in sparse.iter().enumerate() {
             let dense = fbank
                 .mel_filters
                 .row(mel_idx)
@@ -422,10 +460,8 @@ mod tests {
                 .map(|(filter, power)| filter * power)
                 .sum::<f64>();
             assert!(
-                (sparse[mel_idx] - dense).abs() <= 1e-12,
-                "mel {mel_idx}: sparse {}, dense {}",
-                sparse[mel_idx],
-                dense
+                (sparse - dense).abs() <= 1e-12,
+                "mel {mel_idx}: sparse {sparse}, dense {dense}"
             );
         }
 
@@ -433,6 +469,145 @@ mod tests {
             fbank.sparse_mel_filters.non_zero_weights()
                 < fbank.sparse_mel_filters.dense_weights() / 10
         );
+    }
+
+    /// Frame-by-frame form of `Fbank::compute` with the dense filterbank.
+    fn reference_fbank(fbank: &Fbank, samples: &[f32]) -> Array2<f32> {
+        let config = fbank.config();
+        let frame_len = config.frame_length_samples();
+        let frame_shift = config.frame_shift_samples();
+        let num_frames = 1 + (samples.len() - frame_len) / frame_shift;
+        let dense = fbank.dense_filterbank();
+        let fft = RealFftPlanner::<f64>::new().plan_fft_forward(config.fft_size());
+        let floor = if config.energy_floor > 0.0 {
+            config.energy_floor
+        } else {
+            f32::EPSILON as f64
+        };
+        let mut features = Array2::<f32>::zeros((num_frames, config.num_mel_bins));
+        for frame_idx in 0..num_frames {
+            let start = frame_idx * frame_shift;
+            let frame = &samples[start..start + frame_len];
+            let mean = frame.iter().map(|&x| x as f64).sum::<f64>() / frame_len as f64;
+            let mut buf = frame.iter().map(|&x| x as f64 - mean).collect::<Vec<_>>();
+            if config.preemphasis > 0.0 {
+                for i in (1..frame_len).rev() {
+                    buf[i] -= config.preemphasis * buf[i - 1];
+                }
+                if start > 0 {
+                    buf[0] -= config.preemphasis * (samples[start - 1] as f64 - mean);
+                }
+            }
+            let mut input = fft.make_input_vec();
+            for i in 0..frame_len {
+                input[i] = buf[i] * fbank.window[i];
+            }
+            let mut spectrum = fft.make_output_vec();
+            fft.process(&mut input, &mut spectrum).unwrap();
+            for mel_idx in 0..config.num_mel_bins {
+                let mut energy = 0.0;
+                for (weight, c) in dense.row(mel_idx).iter().zip(&spectrum) {
+                    let power = if config.use_power {
+                        c.norm_sqr()
+                    } else {
+                        c.norm()
+                    };
+                    energy += weight * power;
+                }
+                let mut energy = f64::max(energy, floor);
+                if config.use_log_fbank {
+                    energy = energy.ln();
+                }
+                features[[frame_idx, mel_idx]] = energy as f32;
+            }
+        }
+        if config.apply_cmn {
+            for mel_idx in 0..config.num_mel_bins {
+                let mean = features.column(mel_idx).mean().unwrap();
+                features
+                    .column_mut(mel_idx)
+                    .mapv_inplace(|value| value - mean);
+            }
+        }
+        features
+    }
+
+    #[test]
+    fn fbank_matches_frame_by_frame_dense_reference() {
+        let samples = (0..16_000)
+            .map(|idx| {
+                ((idx as f32) * 0.05).sin() * 0.3 + ((idx * 7919 % 997) as f32 / 997.0 - 0.5) * 0.05
+            })
+            .collect::<Vec<_>>();
+        let configs = [
+            FbankConfig::default(),
+            FbankConfig {
+                apply_cmn: false,
+                use_power: false,
+                energy_floor: 1e-3,
+                ..FbankConfig::default()
+            },
+            FbankConfig {
+                num_mel_bins: 23,
+                use_log_fbank: false,
+                preemphasis: 0.0,
+                ..FbankConfig::default()
+            },
+        ];
+        for config in configs {
+            let fbank = Fbank::new(config);
+            for len in [400, 401, 560, 1_840, 16_000] {
+                let got = fbank.compute(&samples[..len]);
+                let want = reference_fbank(&fbank, &samples[..len]);
+                assert_eq!(got, want, "len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_fbank_matches_frame_by_frame_dense_reference() {
+        let mut rng = Rng::new(7);
+        for case in 0..fuzz_cases(60) {
+            let sample_rate = [8_000.0, 16_000.0, 22_050.0, 44_100.0][rng.range(0, 3)];
+            let min_ms = 2_000.0 / sample_rate;
+            let low_freq = if rng.chance(0.5) {
+                20.0
+            } else {
+                rng.unit() * 200.0
+            };
+            let config = FbankConfig {
+                sample_rate,
+                num_mel_bins: if rng.chance(0.2) { 1 } else { rng.range(1, 64) },
+                frame_length_ms: min_ms + (rng.unit() * 40.0),
+                frame_shift_ms: min_ms + (rng.unit() * 25.0),
+                dither: 0.0,
+                energy_floor: if rng.chance(0.5) { 0.0 } else { rng.unit() },
+                use_energy: false,
+                use_log_fbank: rng.chance(0.8),
+                use_power: rng.chance(0.8),
+                preemphasis: [0.0, 0.97, rng.unit()][rng.range(0, 2)],
+                apply_cmn: rng.chance(0.6),
+                low_freq,
+                high_freq: if rng.chance(0.5) {
+                    0.0
+                } else {
+                    low_freq + (rng.unit() * (sample_rate / 2.0 - low_freq))
+                },
+            };
+            let fbank = Fbank::new(config.clone());
+            let frame_len = config.frame_length_samples();
+            let len = frame_len + rng.range(0, frame_len * 12);
+            let samples = rng.signal(len);
+            let got = fbank.compute(&samples);
+            let want = reference_fbank(&fbank, &samples);
+            assert_eq!(got.dim(), want.dim(), "case {case}: {config:?}");
+            for (idx, (got, want)) in got.iter().zip(want.iter()).enumerate() {
+                assert!(
+                    same_f32(*got, *want),
+                    "case {case} value {idx}: {got} vs {want}, {config:?} len {len}"
+                );
+            }
+        }
     }
 
     #[test]

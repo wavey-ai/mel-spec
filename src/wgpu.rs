@@ -479,8 +479,7 @@ impl WgpuMelSpectrogram {
     }
 
     fn max_frames_per_batch(&self) -> usize {
-        let max_storage_binding_size =
-            ::wgpu::Limits::default().max_storage_buffer_binding_size as u64;
+        let max_storage_binding_size = ::wgpu::Limits::default().max_storage_buffer_binding_size;
         let complex_fft_size = if self.fft_size.is_power_of_two() {
             self.fft_size
         } else {
@@ -679,7 +678,6 @@ impl WgpuMelSpectrogram {
             &pointwise_buffer,
             num_frames,
             convolution_size,
-            max_invocations_per_dispatch,
         );
 
         self.encode_conjugate(
@@ -771,8 +769,8 @@ impl WgpuMelSpectrogram {
         output_buffer: &::wgpu::Buffer,
         num_frames: usize,
         fft_size: usize,
-        max_invocations_per_dispatch: u32,
     ) {
+        let max_invocations_per_dispatch = MAX_DISPATCH_GROUPS * WORKGROUP_SIZE;
         let total = (num_frames * fft_size) as u32;
         for dispatch_offset in (0..total).step_by(max_invocations_per_dispatch as usize) {
             let chunk_invocations = (total - dispatch_offset).min(max_invocations_per_dispatch);

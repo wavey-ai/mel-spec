@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "mel_spec"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bytemuck",
  "cc",
@@ -831,6 +831,7 @@ dependencies = [
  "ndarray-npy",
  "ort",
  "pollster",
+ "realfft",
  "rtrb",
  "rustfft",
  "soundkit",

@@ -19,7 +19,7 @@ pub fn save_tga_8bit(data: &[f32], n_mels: usize, path: &str) -> io::Result<()> 
         "width greater than TARGA max, use [`tga_8bit`]"
     );
 
-    let data = tga_8bit_data(&data, n_mels);
+    let data = tga_8bit_data(data, n_mels);
     let mut file = File::create(path)?;
     file.write_all(&data)?;
 
@@ -37,7 +37,7 @@ pub fn tga_8bit(data: &[f32], n_mels: usize) -> Vec<Vec<u8>> {
 
 pub fn tga_8bit_data(data: &[f32], n_mels: usize) -> Vec<u8> {
     // Quantize the floating-point data to 8-bit grayscale
-    let (tga_data, range) = quantize(&data.to_vec());
+    let (tga_data, range) = quantize(data);
 
     let width = (data.len() / n_mels) as u16;
     let height = n_mels as u16;
@@ -56,7 +56,7 @@ pub fn tga_8bit_data(data: &[f32], n_mels: usize) -> Vec<u8> {
     tga_header.extend_from_slice(&range.min.to_le_bytes());
     tga_header.extend_from_slice(&range.max.to_le_bytes());
 
-    let mut tga_image = Vec::new();
+    let mut tga_image = Vec::with_capacity(tga_header.len() + tga_data.len());
     tga_image.extend_from_slice(&tga_header);
     tga_image.extend_from_slice(&tga_data);
 
@@ -138,13 +138,13 @@ pub fn chunk_frames_into_strides(
 /// Quantize an interleaved spectrogram, returning u8 bytes suitable for
 /// grayscale.
 pub fn quantize(frame: &[f32]) -> (Vec<u8>, QuantizationRange) {
-    let mut result: Vec<u8> = Vec::new();
+    let mut result: Vec<u8> = Vec::with_capacity(frame.len());
     let min = frame.iter().copied().fold(f32::INFINITY, f32::min);
     let max = frame.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let scale = 255.0 / (max - min);
 
     for &value in frame {
-        let scaled_value = ((value - min) * scale).round().max(0.0).min(255.0);
+        let scaled_value = ((value - min) * scale).round().clamp(0.0, 255.0);
         result.push(scaled_value as u8);
     }
 

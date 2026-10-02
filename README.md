@@ -4,10 +4,17 @@
 
 Fast Rust mel spectrogram and VAD primitives for ASR systems.
 
-**Release note:** `0.4.0` moves CPU mel and Kaldi fbank computation onto sparse
-filterbank projection derived from the same dense reference matrices. On the
-Parakeet/NeMo JFK benchmark, the pure Rust frontend is now close to C/libtorch
-CPU trace performance while preserving fixture parity.
+| Path (11 s JFK sample, Apple M1, one thread) | 0.4.1 | 0.5.0 | Speedup | Max. difference from 0.4.1 |
+| --- | ---: | ---: | ---: | ---: |
+| `BatchLogMelSpectrogram`, Parakeet configuration | 2.28 ms | 1.13 ms | 2.02x | 4.5e-4 |
+| `BatchLogMelSpectrogram`, default configuration | 1.79 ms | 0.95 ms | 1.88x | 3.2e-4 |
+| `Spectrogram::compute_mel_spectrogram_cpu` | 4.00 ms | 1.96 ms | 2.04x | 0 |
+| `Spectrogram::add` and `MelSpectrogram::add` | 4.20 ms | 2.49 ms | 1.68x | 8.4e-14 |
+| `RingBuffer` | 4.23 ms | 2.33 ms | 1.81x | 8.4e-14 |
+| `Fbank::compute` | 3.22 ms | 2.16 ms | 1.49x | 0 |
+| `VoiceActivityDetector::add_activity` | 0.87 ms | 0.23 ms | 3.74x | 0 |
+| `interleave_frames` | 0.25 ms | 0.07 ms | 3.66x | 0 |
+| `SpeechToMel` log-mel step, native build | 19.1 ms | 2.16 ms | 8.8x | 1.0e-11 |
 
 `mel-spec` contains low-cost, predictable components for speech pipelines. The
 components are:

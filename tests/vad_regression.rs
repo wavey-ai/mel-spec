@@ -128,16 +128,12 @@ fn legacy_vad_boundaries(frames: &[Array2<f64>], settings: &DetectionSettings) -
 fn legacy_smooth_mask(mask: &[bool], window: usize) -> Vec<bool> {
     let n = mask.len();
     let mut smoothed = vec![false; n];
-    for i in 0..n {
-        let start = if i < window { 0 } else { i - window };
-        let end = if i + window + 1 > n {
-            n
-        } else {
-            i + window + 1
-        };
+    for (i, smoothed) in smoothed.iter_mut().enumerate() {
+        let start = i.saturating_sub(window);
+        let end = (i + window + 1).min(n);
         let count_true = mask[start..end].iter().filter(|&&val| val).count();
         if count_true * 2 >= (end - start) {
-            smoothed[i] = true;
+            *smoothed = true;
         }
     }
     smoothed
@@ -189,7 +185,7 @@ fn vad_boundaries_matches_legacy_on_reference_fixtures() {
         let dequantized_mel = load_tga_8bit(path).unwrap();
         let frames = to_array2(&dequantized_mel, n_mels);
 
-        let current = vad_boundaries(&[frames.clone()], &settings);
+        let current = vad_boundaries(std::slice::from_ref(&frames), &settings);
         let legacy = legacy_vad_boundaries(&[frames], &settings);
 
         assert_eq!(current.intersected(), legacy.intersected(), "{path}");
@@ -263,4 +259,81 @@ fn streaming_vad_can_return_stft_timestamps() {
             end_ms: 45,
         })
     );
+}
+
+/// Computes the expected streaming decision from `vad_boundaries` over the
+/// last `min_x` frames.
+fn expected_activity(
+    window: &[Array2<f64>],
+    settings: &DetectionSettings,
+) -> (bool, usize, usize, usize) {
+    let edge_info = vad_boundaries(window, settings);
+    let intersected = edge_info.intersected();
+    let active_columns = intersected.len();
+    let window_columns = active_columns + edge_info.non_intersected().len();
+    let leading = intersected
+        .iter()
+        .enumerate()
+        .take_while(|(expected, column)| *expected == **column)
+        .count();
+    (
+        intersected.first() == Some(&0),
+        leading,
+        active_columns,
+        window_columns,
+    )
+}
+
+#[test]
+fn streaming_vad_matches_window_boundaries_for_all_frame_shapes() {
+    let n_mels = 80;
+    let dequantized_mel = load_tga_8bit("./testdata/quantized_mel_golden.tga").unwrap();
+    let frames = to_array2(&dequantized_mel, n_mels);
+    let columns: Vec<Array2<f64>> = frames
+        .axis_chunks_iter(Axis(1), 1)
+        .map(|chunk| chunk.to_owned())
+        .collect();
+
+    // Mostly single-column frames, with some two-column frames that stop and
+    // restart the single-column fast path.
+    let mut chunks = Vec::new();
+    let mut idx = 0;
+    while idx + 2 <= columns.len() {
+        if idx % 97 == 50 {
+            chunks.push(frames.slice(s![.., idx..idx + 2]).to_owned());
+            idx += 2;
+        } else {
+            chunks.push(columns[idx].clone());
+            idx += 1;
+        }
+    }
+
+    for min_x in [0, 1, 2, 3, 5, 10] {
+        for (min_y, min_mel) in [(3, 0), (11, 2), (0, 0)] {
+            let settings = DetectionSettings {
+                min_energy: 1.0,
+                min_y,
+                min_x,
+                min_mel,
+            };
+            let mut vad = VoiceActivityDetector::new(&settings);
+            for (frame_idx, chunk) in chunks.iter().enumerate() {
+                let activity = vad.add_activity(chunk);
+                if frame_idx + 1 < min_x {
+                    assert!(activity.is_none());
+                    continue;
+                }
+                let activity = activity.expect("window is full");
+                let window = &chunks[frame_idx + 1 - min_x..=frame_idx];
+                let (active, leading, active_columns, window_columns) =
+                    expected_activity(window, &settings);
+                let label = format!("min_x {min_x} min_y {min_y} frame {frame_idx}");
+                assert_eq!(activity.frame_index, frame_idx, "{label}");
+                assert_eq!(activity.active, active, "{label}");
+                assert_eq!(activity.leading_active_columns, leading, "{label}");
+                assert_eq!(activity.active_columns, active_columns, "{label}");
+                assert_eq!(activity.window_columns, window_columns, "{label}");
+            }
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use crate::mel::{interleave_frames, log_mel_spectrogram, mel, norm_mel};
+use crate::mel::{norm_mel_in_place_f64, whisper_power_spectrum, SparseMelFilterbank};
 use crate::quant::quantize;
 use crate::stft::Spectrogram;
 use crate::vad::{duration_ms_for_n_frames, DetectionSettings, VoiceActivityDetector};
@@ -9,10 +9,14 @@ use web_sys::Worker;
 
 #[wasm_bindgen]
 pub struct SpeechToMel {
-    mel: Array2<f64>,
-    mel_vad: Array2<f64>,
+    mel: SparseMelFilterbank,
+    mel_vad: SparseMelFilterbank,
+    power: Vec<f64>,
+    frame: Vec<f64>,
+    frame_vad: Vec<f64>,
     fft: Spectrogram,
     vad: VoiceActivityDetector,
+    fft_size: usize,
     hop_size: usize,
     sampling_rate: f64,
     accumulated_samples: Vec<f32>,
@@ -37,6 +41,8 @@ impl SpeechToMel {
         )
     }
 
+    // The JavaScript constructor takes each setting as a positional argument.
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = newWithVadSettings)]
     pub fn new_with_vad_settings(
         fft_size: usize,
@@ -69,17 +75,30 @@ impl SpeechToMel {
         n_mels: usize,
         settings: DetectionSettings,
     ) -> Self {
-        let filters = mel(sampling_rate, fft_size, n_mels, None, None, false, true);
-        let filters2 = mel(sampling_rate, fft_size, n_mels / 4, None, None, false, true);
+        let mel =
+            SparseMelFilterbank::from_mel(sampling_rate, fft_size, n_mels, None, None, false, true);
+        let mel_vad = SparseMelFilterbank::from_mel(
+            sampling_rate,
+            fft_size,
+            n_mels / 4,
+            None,
+            None,
+            false,
+            true,
+        );
         let stft = Spectrogram::new(fft_size, hop_size);
         let vad = VoiceActivityDetector::new(&settings);
         Self {
             accumulated_samples: Vec::new(),
-            mel: filters,
-            mel_vad: filters2,
+            power: vec![0.0; mel.fft_bins()],
+            frame: vec![0.0; mel.n_mels()],
+            frame_vad: vec![0.0; mel_vad.n_mels()],
+            mel,
+            mel_vad,
             fft: stft,
             vad,
             sampling_rate,
+            fft_size,
             hop_size,
             idx: 0,
         }
@@ -97,7 +116,7 @@ impl SpeechToMel {
         Reflect::set(&result, &JsValue::from_str("ok"), &JsValue::from(false)).unwrap();
         self.accumulated_samples.extend_from_slice(&data);
         if self.accumulated_samples.len() >= self.hop_size {
-            let (samples, rest) = self.accumulated_samples.split_at(self.hop_size);
+            let samples = &self.accumulated_samples[..self.hop_size];
 
             Reflect::set(
                 &result,
@@ -106,11 +125,11 @@ impl SpeechToMel {
             )
             .unwrap();
 
-            if let Some(fft) = self.fft.add(&samples.to_vec()) {
-                //let frame = norm_mel(&log_mel_spectrogram(&fft, &self.mel));
-                let frame = &log_mel_spectrogram(&fft, &self.mel);
-                let frame2 = norm_mel(&log_mel_spectrogram(&fft, &self.mel_vad));
-                let (quant_frame, range) = quantize(&interleave_frames(&[frame.clone()], false, 0));
+            if let Some(spectrum) = self.fft.add_half(samples) {
+                whisper_power_spectrum(spectrum, self.fft_size / 2, &mut self.power);
+                self.mel.project_log10_f64(&self.power, &mut self.frame);
+                let frame = self.frame.iter().map(|v| *v as f32).collect::<Vec<_>>();
+                let (quant_frame, range) = quantize(&frame);
                 let frame_array = Uint8Array::from(&quant_frame[..]);
                 let frame_clamped_array = Uint8ClampedArray::new(&frame_array.buffer());
                 Reflect::set(&result, &JsValue::from_str("frame"), &frame_clamped_array).unwrap();
@@ -131,13 +150,19 @@ impl SpeechToMel {
                 Reflect::set(&result, &JsValue::from_str("idx"), &JsValue::from(self.idx)).unwrap();
                 Reflect::set(&result, &JsValue::from_str("ms"), &JsValue::from(ms)).unwrap();
                 if vad {
+                    self.mel_vad
+                        .project_log10_f64(&self.power, &mut self.frame_vad);
+                    norm_mel_in_place_f64(&mut self.frame_vad);
+                    let frame2 =
+                        Array2::from_shape_vec((self.frame_vad.len(), 1), self.frame_vad.clone())
+                            .expect("VAD frame shape matches the filterbank");
                     if let Some(gap) = self.vad.add(&frame2) {
                         Reflect::set(&result, &JsValue::from_str("va"), &JsValue::from(gap))
                             .unwrap();
                     }
                 }
             }
-            self.accumulated_samples = rest.to_vec();
+            self.accumulated_samples.drain(..self.hop_size);
             self.idx = self.idx.wrapping_add(1);
         }
 
@@ -148,6 +173,5 @@ impl SpeechToMel {
 /// Run entry point for the main thread.
 #[wasm_bindgen]
 pub fn startup(path: String) -> Worker {
-    let worker_handle = Worker::new(&path).unwrap();
-    worker_handle
+    Worker::new(&path).unwrap()
 }

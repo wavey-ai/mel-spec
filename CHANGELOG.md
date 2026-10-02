@@ -1,3 +1,115 @@
+# Version 0.5.0
+
+* Bumped the crate as a minor release because feature values change by FFT
+  rounding. The public API is compatible with 0.4.1.
+* The README table gives the CPU times before and after these changes.
+
+FFT:
+
+* Changed all CPU STFT paths to a real-input FFT from the `realfft` crate.
+  The real-input FFT does approximately half the work of a complex FFT.
+  `Spectrogram`, `BatchLogMelSpectrogram`, and `Fbank` use it.
+* Added `realfft` 3.5 as a dependency.
+* `Spectrogram::add` and `Spectrogram::compute_all_cpu` still return all
+  `fft_size` bins. The upper bins are the complex conjugates of the lower bins.
+
+Mel projection:
+
+* `SparseMelFilterbank` keeps the weights of each mel row as one contiguous
+  band, in `f64` and `f32` forms. The projection adds the band in bin order,
+  as before.
+* `BatchLogMelSpectrogram`, `Spectrogram::compute_mel_spectrogram_cpu`, and
+  `Fbank::compute` project eight frames at a time. Each frame uses one SIMD lane
+  and keeps its own summation order.
+* `MelSpectrogram::add` calculates the power of each FFT bin one time per frame.
+  Before, it calculated the power again for each filter that used the bin.
+
+Batch features:
+
+* `BatchLogMelSpectrogram` writes the pre-emphasized waveform directly into the
+  padded buffer. This removes one copy of the input.
+* `BatchLogMelSpectrogram` adds the per-feature sums during the frame loop. The
+  variance pass processes eight mel rows together and keeps the frame order of
+  each sum.
+* Fixed a panic when a `BatchLogMelScratch` from a frontend with other settings
+  is used. The frontend now resizes the scratch buffers.
+* Added a `Default` implementation for `BatchLogMelScratch`.
+* `Spectrogram::compute_all_cpu` and `Spectrogram::compute_mel_spectrogram_cpu`
+  keep one windowed frame in memory at a time.
+* `Fbank::compute` calculates the CMN means row by row in frame order. Each
+  column sum has the same order as before.
+
+Streaming:
+
+* `Spectrogram::add` makes one allocation per frame, for the returned spectrum.
+* `RingBuffer::maybe_mel` keeps the capacity of its sample buffer and uses the
+  half spectrum directly.
+
+Voice activity detection:
+
+* `VoiceActivityDetector` keeps the last `min_x` frames and reuses their
+  storage. Before, it kept up to 128 frames.
+* `VoiceActivityDetector` reuses its classification buffers across calls.
+* For single-column frames, `VoiceActivityDetector` keeps the classification of
+  each column triple. A new frame then needs one new classification. Other
+  frame shapes use the full window classification.
+* Fixed a panic in `vad_boundaries` and `VoiceActivityDetector` for frames in
+  column-major layout. For example, `ndarray::concatenate` along axis 1 can
+  return a column-major array. The 0.4.0 and 0.4.1 releases have this panic.
+
+Other changes:
+
+* `interleave_frames` reads each frame one time and writes into a zeroed output.
+  Before, it copied all frames two times.
+* The WASM `SpeechToMel` keeps its two sparse filterbanks. Before, it built
+  both filterbanks from dense matrices for each frame.
+* The WASM `SpeechToMel` calculates the VAD mel frame only when VAD is on.
+* `quant::tga_8bit_data` removes one copy of the input.
+  `quant::quantize` allocates its output one time.
+
+Results:
+
+* The real-input FFT changes the FFT rounding. The other changes keep the
+  previous arithmetic and summation order.
+* On the JFK sample, the `f64` paths differ from `0.4.1` by a maximum of
+  8.4e-14.
+* On the JFK sample, the Parakeet configuration of `BatchLogMelSpectrogram`
+  differs from `0.4.1` by a median of 1.3e-7. The 99th percentile is 1.7e-5,
+  and the maximum is 4.5e-4. Low-energy bins have the largest differences.
+* `Fbank::compute`, `Spectrogram::compute_mel_spectrogram_cpu`, VAD decisions,
+  and `interleave_frames` give the same `f32` output as `0.4.1` on the JFK
+  sample.
+* The TEN-VAD evaluation gives the same results for each file as `0.4.1`.
+
+Tests:
+
+* Added a test that compares `BatchLogMelSpectrogram` with a frame-by-frame
+  reference for seven configurations and ten input lengths.
+* Added a test that compares `Fbank::compute` with a frame-by-frame dense
+  filterbank reference.
+* Added a test that compares `Spectrogram::compute_mel_spectrogram_cpu` with
+  `MelSpectrogram::add`.
+* Added a test that compares streaming VAD with `vad_boundaries` for
+  `min_x` values 0, 1, 2, 3, 5, and 10, with single-column and two-column frames.
+* Added a test that compares the real-input FFT spectra with a complex FFT for
+  FFT sizes 400, 512, and 9.
+* Added a test for the padding layout of `interleave_frames`.
+* Added seeded random differential tests. Each test compares an optimized
+  path with an independent reference implementation. The tests cover the
+  sparse projection, `BatchLogMelSpectrogram`, the Whisper mel paths,
+  `Spectrogram`, `Fbank`, `RingBuffer`, the VAD, and `interleave_frames`.
+* Set `MEL_SPEC_FUZZ_SCALE` to multiply the number of random cases, for example
+  `MEL_SPEC_FUZZ_SCALE=50 cargo test --release fuzz_`.
+* Added regression fixtures from 0.4.1 for the JFK sample in
+  `testdata/regression`. The streaming VAD decisions must match the fixtures
+  exactly.
+* `Fbank::compute` must stay within 1e-4 of the fixture, and
+  `Spectrogram::compute_mel_spectrogram_cpu` must stay within 1e-5. On the
+  platform that made the fixtures, both match exactly. The tolerances allow for
+  math-library differences on other platforms.
+* The Parakeet configuration of `BatchLogMelSpectrogram` must stay within a
+  maximum difference of 5e-3 and a mean difference of 1e-5.
+
 # Version 0.4.1
 
 * Added direct batch feature extraction from interleaved multichannel PCM.
